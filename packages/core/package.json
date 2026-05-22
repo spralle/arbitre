@@ -1,0 +1,43 @@
+{
+  "name": "@arbitre/core",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Rete-inspired production rule engine for declarative state governance",
+  "license": "MIT",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "import": "./dist/testing.js",
+      "require": "./dist/testing.cjs"
+    },
+    "./debug": {
+      "types": "./dist/debug.d.ts",
+      "import": "./dist/debug.js",
+      "require": "./dist/debug.cjs"
+    }
+  },
+  "files": ["dist", "src"],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc --noEmit",
+    "build:dist": "tsup",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "kuery": ">=0.1.0"
+  },
+  "peerDependenciesMeta": {
+    "kuery": { "optional": false }
+  },
+  "devDependencies": {
+    "kuery": "file:../../../kuery"
+  }
+}
