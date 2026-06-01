@@ -320,6 +320,71 @@ Typical performance for rule sets under 100 rules with moderate fact counts:
 - Multi-fact joins (10 facts × 10 facts): < 5ms
 - Full cycle with TMS: < 10ms
 
+## Rule Builder
+
+For programmatic rule construction, use the `defineRule` fluent builder:
+
+```typescript
+import { defineRule } from "@arbitre/core";
+
+const rule = defineRule("high-value-order")
+  .when({ $gt: [{ $path: "order.total" }, 1000] })
+  .then([{ $set: { "flags.highValue": true } }])
+  .salience(5)
+  .description("Flag orders over $1000")
+  .build();
+```
+
+## Observability
+
+### Lifecycle Hooks
+
+```typescript
+import { createSession } from "@arbitre/core";
+import type { SessionHooks } from "@arbitre/core";
+
+const hooks: SessionHooks = {
+  onRuleActivated: (e) => console.log(`Activated: ${e.ruleName}`),
+  onRuleFired: (e) => console.log(`Fired: ${e.ruleName}`),
+  onRuleDeactivated: (e) => console.log(`Deactivated: ${e.ruleName}`),
+  onFactAsserted: (e) => console.log(`Fact+: ${e.factType}#${e.factId}`),
+  onFactRetracted: (e) => console.log(`Fact-: ${e.factType}#${e.factId}`),
+  onCycleStart: (e) => console.log(`Cycle ${e.cycleNumber} start`),
+  onCycleEnd: (e) => console.log(`Cycle ${e.cycleNumber} end`),
+};
+
+const session = createSession({ rules, hooks });
+```
+
+### Custom Logger
+
+```typescript
+import type { ArbiterLogger } from "@arbitre/core";
+
+const logger: ArbiterLogger = {
+  debug: (msg, ctx) => myLogger.debug(msg, ctx),
+  info: (msg, ctx) => myLogger.info(msg, ctx),
+  warn: (msg, ctx) => myLogger.warn(msg, ctx),
+  error: (msg, ctx) => myLogger.error(msg, ctx),
+};
+
+const session = createSession({ rules, logger });
+```
+
+### Introspection
+
+```typescript
+const session = createSession({ rules, initialState });
+session.fire();
+
+const i = session.introspect;
+console.log(i.getRegisteredRules());  // ["rule-a", "rule-b"]
+console.log(i.getActiveRules());      // ["rule-a"]
+console.log(i.getAgendaEntries());    // [] (empty after fire)
+console.log(i.getFactCounts());       // { order: 3 }
+console.log(i.getMetrics());          // { totalRulesFired: 2, ... }
+```
+
 ## Dependencies
 
 | Dependency | Role |

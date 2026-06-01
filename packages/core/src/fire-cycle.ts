@@ -11,6 +11,9 @@ import type {
 	ThenOperatorRegistry,
 } from "./contracts.js";
 import { ArbiterError, ArbiterErrorCode } from "./errors.js";
+import { emitHook } from "./hooks.js";
+import type { SessionHooks } from "./hooks.js";
+import type { ArbiterLogger } from "./logger.js";
 import type { ScopeManager } from "./scope.js";
 import { executeStages } from "./stage-executor.js";
 import type { TruthMaintenanceSystem } from "./tms.js";
@@ -44,6 +47,8 @@ export interface FireContext {
 	readonly pendingTokens?: Map<string, Token> | undefined;
 	/** Tracks else-branch firing state across fire cycles */
 	readonly elseTracking?: { wasActive: Set<string>; elseFired: Set<string> } | undefined;
+	readonly hooks?: SessionHooks | undefined;
+	readonly logger?: ArbiterLogger | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -87,11 +92,15 @@ export function reevaluateRule(rule: CompiledRule, ctx: FireContext): readonly S
 		ctx.tms.ruleActivated(rule);
 		ctx.elseTracking?.wasActive.add(rule.name);
 		ctx.elseTracking?.elseFired.delete(rule.name);
+		emitHook(ctx.hooks, "onRuleActivated", { ruleName: rule.name, timestamp: Date.now() });
 	} else if (isActive && wasActive) {
 		ctx.agenda.addActivation(rule);
 	} else if (!isActive && wasActive) {
 		ctx.agenda.removeActivation(rule.name);
-		return buildRetractionChanges(rule, ctx);
+		const retractionChanges = buildRetractionChanges(rule, ctx);
+		const revertedPaths = retractionChanges.map((c) => c.path);
+		emitHook(ctx.hooks, "onRuleDeactivated", { ruleName: rule.name, timestamp: Date.now(), revertedPaths });
+		return retractionChanges;
 	}
 	return [];
 }
@@ -115,9 +124,13 @@ export function evaluateAllRules(ctx: FireContext): readonly StateChange[] {
 			ctx.tms.ruleActivated(rule);
 			ctx.elseTracking?.wasActive.add(rule.name);
 			ctx.elseTracking?.elseFired.delete(rule.name);
+			emitHook(ctx.hooks, "onRuleActivated", { ruleName: rule.name, timestamp: Date.now() });
 		} else if (!isActive && wasActive) {
 			ctx.agenda.removeActivation(rule.name);
-			retractions.push(...buildRetractionChanges(rule, ctx));
+			const retractionChanges = buildRetractionChanges(rule, ctx);
+			const revertedPaths = retractionChanges.map((c) => c.path);
+			emitHook(ctx.hooks, "onRuleDeactivated", { ruleName: rule.name, timestamp: Date.now(), revertedPaths });
+			retractions.push(...retractionChanges);
 		}
 	}
 	return retractions;
@@ -200,6 +213,9 @@ export function fireCycle(ctx: FireContext): FiringResult {
 
 	while (!ctx.agenda.isEmpty()) {
 		cycles++;
+		const changesBeforeCycle = changes.length;
+
+		emitHook(ctx.hooks, "onCycleStart", { cycleNumber: cycles, agendaSize: ctx.agenda.size() });
 
 		if (cycles > ctx.limits.maxCycles) {
 			throw new ArbiterError(
@@ -228,6 +244,13 @@ export function fireCycle(ctx: FireContext): FiringResult {
 		changes.push(...ruleChanges);
 		rulesFired++;
 
+		emitHook(ctx.hooks, "onRuleFired", {
+			ruleName: rule.name,
+			timestamp: Date.now(),
+			changes: ruleChanges,
+			cycleNumber: cycles,
+		});
+
 		// Clear fact bindings after rule fires
 		if (token) {
 			clearFactBindings(ctx.scope);
@@ -247,6 +270,12 @@ export function fireCycle(ctx: FireContext): FiringResult {
 		}
 
 		propagateChanges(ruleChanges, ctx, changes);
+
+		emitHook(ctx.hooks, "onCycleEnd", {
+			cycleNumber: cycles,
+			rulesFired: 1,
+			changesInCycle: changes.length - changesBeforeCycle,
+		});
 	}
 
 	return { rulesFired, cycles, changes, warnings };

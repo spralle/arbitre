@@ -47,8 +47,26 @@ export { ArbiterError, ArbiterErrorCode } from "./errors.js";
 export type { Fact, FactMemory } from "./fact-memory.js";
 export type { CompiledPattern, FactPattern } from "./fact-pattern.js";
 export type { FactFieldType, FactRegistry, FactTypeDefinition } from "./fact-registry.js";
+// Hooks / Observability
+export type {
+	SessionHooks,
+	RuleActivatedEvent,
+	RuleDeactivatedEvent,
+	RuleFiredEvent,
+	FactAssertedEvent,
+	FactRetractedEvent,
+	CycleStartEvent,
+	CycleEndEvent,
+} from "./hooks.js";
+export { emitHook } from "./hooks.js";
+export type { ArbiterLogger } from "./logger.js";
+export { nullLogger } from "./logger.js";
+export type { SessionIntrospection, SessionMetrics } from "./introspection.js";
 export type { JoinConstraint, JoinNode, JoinNodeConfig } from "./join-node.js";
 export { createJoinNode } from "./join-node.js";
+// Rule builder
+export { defineRule } from "./rule-builder.js";
+export type { RuleBuilder } from "./rule-builder.js";
 // Session factory
 export { createSession } from "./session.js";
 // Temporal operators

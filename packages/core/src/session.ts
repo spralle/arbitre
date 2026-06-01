@@ -22,6 +22,9 @@ import { createFactMemory } from "./fact-memory.js";
 import { createFactRegistry } from "./fact-registry.js";
 import type { FireContext, FireLimits } from "./fire-cycle.js";
 import { evaluateCondition, fireCycle } from "./fire-cycle.js";
+import { emitHook } from "./hooks.js";
+import type { SessionIntrospection, SessionMetrics } from "./introspection.js";
+import { nullLogger } from "./logger.js";
 import { validatePath } from "./path-utils.js";
 import { compileRule } from "./rule-compiler.js";
 import { createScopeManager } from "./scope.js";
@@ -96,6 +99,20 @@ export function createSession<TState = Record<string, unknown>>(config?: Session
 	let disposed = false;
 	let firing = false;
 
+	const hooks = config?.hooks;
+	const logger = config?.logger ?? nullLogger;
+	const metrics: {
+		totalRulesFired: number;
+		totalCycles: number;
+		totalFactsAsserted: number;
+		totalFactsRetracted: number;
+	} = {
+		totalRulesFired: 0,
+		totalCycles: 0,
+		totalFactsAsserted: 0,
+		totalFactsRetracted: 0,
+	};
+
 	const clock = config?.clock;
 	const timerQueue = clock ? createTimerQueue() : undefined;
 
@@ -144,6 +161,8 @@ export function createSession<TState = Record<string, unknown>>(config?: Session
 			ruleConditionState,
 			pendingTokens,
 			elseTracking,
+			hooks,
+			logger,
 		};
 		if (config?.thenOperators) {
 			return { ...ctx, thenOperators: config.thenOperators };
@@ -249,6 +268,8 @@ export function createSession<TState = Record<string, unknown>>(config?: Session
 			}
 			trackPatternRuleProvenance(result);
 			notifySubscribers(result.changes);
+			metrics.totalRulesFired += result.rulesFired;
+			metrics.totalCycles += result.cycles;
 			return result;
 		} finally {
 			firing = false;
@@ -260,14 +281,14 @@ export function createSession<TState = Record<string, unknown>>(config?: Session
 			const rule = compiledRules.get(change.ruleName);
 			if (!rule?.hasPatterns) continue;
 			const tokens = betaEvaluator.getTokensForRule(rule.name);
-			const factIds: string[] = [];
+			const factIds = new Set<string>();
 			for (const token of tokens) {
 				for (const fact of Object.values(token.factBindings)) {
-					if (!factIds.includes(fact.id)) factIds.push(fact.id);
+					factIds.add(fact.id);
 				}
 			}
-			if (factIds.length > 0) {
-				tms.recordFactDependency(rule.name, factIds);
+			if (factIds.size > 0) {
+				tms.recordFactDependency(rule.name, [...factIds]);
 			}
 		}
 	}
@@ -342,9 +363,26 @@ export function createSession<TState = Record<string, unknown>>(config?: Session
 		autoFire,
 		fire,
 	};
-	const assertFact = createAssertFact(factDeps);
-	const retractFact = createRetractFact(factDeps);
+	const assertFactBase = createAssertFact(factDeps);
+	const retractFactBase = createRetractFact(factDeps);
 	const getFacts = createGetFacts(factDeps);
+
+	function assertFact(type: string, data: Readonly<Record<string, unknown>>): string {
+		const id = assertFactBase(type, data);
+		metrics.totalFactsAsserted++;
+		emitHook(hooks, "onFactAsserted", { factId: id, factType: type, data });
+		return id;
+	}
+
+	function retractFact(id: string): boolean {
+		const fact = factMemory?.getFact(id);
+		const result = retractFactBase(id);
+		if (result && fact) {
+			metrics.totalFactsRetracted++;
+			emitHook(hooks, "onFactRetracted", { factId: id, factType: fact.type });
+		}
+		return result;
+	}
 
 	// Temporal operations (extracted to session-temporal.ts)
 	const temporalDeps = {
@@ -364,6 +402,37 @@ export function createSession<TState = Record<string, unknown>>(config?: Session
 	const scheduleRule = createScheduleRule(temporalDeps);
 	const cancelSchedule = createCancelSchedule(temporalDeps);
 
+	const introspect: SessionIntrospection = {
+		getAgendaEntries: () => agenda.getActivations().map((a) => a.rule.name),
+		getRegisteredRules: () => [...compiledRules.keys()],
+		getActiveRules: () => {
+			const active: string[] = [];
+			for (const [name, isActive] of ruleConditionState) {
+				if (isActive) active.push(name);
+			}
+			return active;
+		},
+		getFactCounts: () => {
+			if (!factMemory) return {};
+			const counts: Record<string, number> = {};
+			const factTypesArr = config?.factTypes ?? [];
+			for (const def of factTypesArr) {
+				const facts = factMemory.getFactsByType(def.name);
+				if (facts.length > 0) counts[def.name] = facts.length;
+			}
+			return counts;
+		},
+		getTokenCounts: () => {
+			const counts: Record<string, number> = {};
+			for (const name of compiledRules.keys()) {
+				const tokens = betaEvaluator.getTokensForRule(name);
+				if (tokens.length > 0) counts[name] = tokens.length;
+			}
+			return counts;
+		},
+		getMetrics: () => ({ ...metrics }),
+	};
+
 	return {
 		registerRule,
 		removeRule,
@@ -382,5 +451,6 @@ export function createSession<TState = Record<string, unknown>>(config?: Session
 		tick,
 		scheduleRule,
 		cancelSchedule,
+		introspect,
 	};
 }
