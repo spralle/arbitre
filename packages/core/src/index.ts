@@ -45,7 +45,7 @@ export { createCrossTypeAccumulator } from "./cross-type-accumulate.js";
 export { ArbiterError, ArbiterErrorCode } from "./errors.js";
 // Fact support
 export type { Fact, FactMemory } from "./fact-memory.js";
-export type { CompiledPattern, FactPattern } from "./fact-pattern.js";
+export type { CompiledPattern, FactPattern, JoinPredicate } from "./fact-pattern.js";
 export type { FactFieldType, FactRegistry, FactTypeDefinition } from "./fact-registry.js";
 // Hooks / Observability
 export type {
@@ -62,7 +62,7 @@ export { emitHook } from "./hooks.js";
 export type { ArbiterLogger } from "./logger.js";
 export { nullLogger } from "./logger.js";
 export type { SessionIntrospection, SessionMetrics } from "./introspection.js";
-export type { JoinConstraint, JoinNode, JoinNodeConfig } from "./join-node.js";
+export type { InequalityConstraint, JoinConstraint, JoinNode, JoinNodeConfig } from "./join-node.js";
 export { createJoinNode } from "./join-node.js";
 // Rule builder
 export { defineRule } from "./rule-builder.js";
@@ -76,3 +76,8 @@ export type { ScheduleOptions, TimerEntry, TimerQueue } from "./timer-queue.js";
 export { createTimerQueue } from "./timer-queue.js";
 export type { WindowedAccumulateConfig, WindowedAccumulateNode } from "./windowed-accumulate.js";
 export { createWindowedAccumulateNode } from "./windowed-accumulate.js";
+// Token-driven accumulation
+export type { TokenAccumulateNode } from "./token-accumulate-node.js";
+export { createTokenAccumulateNode, evaluateTokenExpr } from "./token-accumulate-node.js";
+export type { TokenAccumulateManager } from "./token-accumulate-manager.js";
+export { createTokenAccumulateManager } from "./token-accumulate-manager.js";

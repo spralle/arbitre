@@ -1,6 +1,7 @@
 import type { ExprNode } from "kuery";
 import { evaluate } from "kuery";
 import type { Agenda } from "./agenda.js";
+import type { Token } from "./beta-node.js";
 import type { CompiledStage, OperatorFunction, StateChange, ThenOperatorRegistry } from "./contracts.js";
 import { ArbiterError, ArbiterErrorCode } from "./errors.js";
 import { isExpression } from "./path-utils.js";
@@ -16,18 +17,44 @@ function isNamespacedRef(ref: string, namespaces: ReadonlySet<string>): boolean 
 	return isNamespacePath(ref, namespaces);
 }
 
+function resolvePath(obj: Record<string, unknown>, path: string): unknown {
+	const parts = path.split(".");
+	let current: unknown = obj;
+	for (const part of parts) {
+		if (current == null || typeof current !== "object") return undefined;
+		current = (current as Record<string, unknown>)[part];
+	}
+	return current;
+}
+
 export function resolveValue(
 	value: unknown,
 	scope: ScopeManager,
 	operators?: Readonly<Record<string, OperatorFunction>>,
+	token?: Token,
 ): unknown {
 	if (typeof value === "string" && value.startsWith("$")) {
 		const ref = value.slice(1);
+
+		// Check token bindings first (before scope)
+		if (token) {
+			const dotIndex = ref.indexOf(".");
+			if (dotIndex > 0) {
+				const bindingName = ref.slice(0, dotIndex);
+				const fieldPath = ref.slice(dotIndex + 1);
+				const boundFact = token.factBindings[bindingName];
+				if (boundFact) {
+					return resolvePath(boundFact.data, fieldPath);
+				}
+			}
+		}
+
+		// Fall through to scope resolution (existing behavior)
 		const path = isNamespacedRef(`$${ref}`, scope.getRegisteredNamespaces()) ? `$${ref}` : ref;
 		return scope.get(path);
 	}
 	if (isExpression(value) && isRecord(value)) {
-		return evaluateExpression(value, scope, operators);
+		return evaluateExpression(value, scope, operators, token);
 	}
 	return value;
 }
@@ -36,6 +63,7 @@ function evaluateExpression(
 	expr: Record<string, unknown>,
 	scope: ScopeManager,
 	operators?: Readonly<Record<string, OperatorFunction>>,
+	token?: Token,
 ): unknown {
 	const keys = Object.keys(expr);
 	const opKey = keys.find((k) => k.startsWith("$"));
@@ -43,8 +71,8 @@ function evaluateExpression(
 
 	const rawArgs = expr[opKey];
 	const args = Array.isArray(rawArgs)
-		? rawArgs.map((a) => resolveValue(a, scope, operators))
-		: [resolveValue(rawArgs, scope, operators)];
+		? rawArgs.map((a) => resolveValue(a, scope, operators, token))
+		: [resolveValue(rawArgs, scope, operators, token)];
 
 	if (operators && opKey in operators) {
 		return operators[opKey](args, scope.getReadView());
@@ -62,6 +90,7 @@ export interface StageExecContext {
 	readonly agenda: Agenda;
 	readonly thenOperators?: ThenOperatorRegistry | undefined;
 	readonly operators?: Readonly<Record<string, OperatorFunction>> | undefined;
+	readonly token?: Token | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -105,7 +134,7 @@ function executeSingleStage(stage: CompiledStage, ruleName: string, ctx: StageEx
 function executeSet(entries: ReadonlyMap<string, unknown>, ruleName: string, ctx: StageExecContext): StateChange[] {
 	const changes: StateChange[] = [];
 	for (const [path, compiledValue] of entries) {
-		const value = resolveValue(compiledValue, ctx.scope, ctx.operators);
+		const value = resolveValue(compiledValue, ctx.scope, ctx.operators, ctx.token);
 		const prev = ctx.scope.get(path);
 		ctx.scope.set(path, value, ruleName);
 		changes.push({ path, previousValue: prev, newValue: value, ruleName });
@@ -126,7 +155,7 @@ function executeUnset(entries: ReadonlyMap<string, unknown>, ruleName: string, c
 function executeInc(entries: ReadonlyMap<string, unknown>, ruleName: string, ctx: StageExecContext): StateChange[] {
 	const changes: StateChange[] = [];
 	for (const [path, compiledValue] of entries) {
-		const value = resolveValue(compiledValue, ctx.scope, ctx.operators);
+		const value = resolveValue(compiledValue, ctx.scope, ctx.operators, ctx.token);
 		const prev = ctx.scope.get(path);
 		ctx.scope.inc(path, value, ruleName);
 		const newVal = ctx.scope.get(path);
@@ -138,7 +167,7 @@ function executeInc(entries: ReadonlyMap<string, unknown>, ruleName: string, ctx
 function executePush(entries: ReadonlyMap<string, unknown>, ruleName: string, ctx: StageExecContext): StateChange[] {
 	const changes: StateChange[] = [];
 	for (const [path, compiledValue] of entries) {
-		const value = resolveValue(compiledValue, ctx.scope, ctx.operators);
+		const value = resolveValue(compiledValue, ctx.scope, ctx.operators, ctx.token);
 		const prev = ctx.scope.get(path);
 		ctx.scope.push(path, value, ruleName);
 		const newVal = ctx.scope.get(path);
@@ -162,7 +191,7 @@ function executePull(entries: ReadonlyMap<string, unknown>, ruleName: string, ct
 function executeMerge(entries: ReadonlyMap<string, unknown>, ruleName: string, ctx: StageExecContext): StateChange[] {
 	const changes: StateChange[] = [];
 	for (const [path, compiledValue] of entries) {
-		const value = resolveValue(compiledValue, ctx.scope, ctx.operators);
+		const value = resolveValue(compiledValue, ctx.scope, ctx.operators, ctx.token);
 		const prev = ctx.scope.get(path);
 		ctx.scope.merge(path, value, ruleName);
 		const newVal = ctx.scope.get(path);

@@ -25,6 +25,9 @@ export interface FactSessionDeps {
 	readonly crossTypeAccumulator:
 		| { onTokenCreated(ruleName: string, token: Token): void; onTokenRemoved(ruleName: string, token: Token): void }
 		| undefined;
+	readonly tokenAccumulateManager:
+		| { onTokenCreated(ruleName: string, token: Token): void; onTokenRemoved(ruleName: string, token: Token): void }
+		| undefined;
 	readonly betaEvaluator: {
 		onFactAsserted(
 			factType: string,
@@ -81,7 +84,7 @@ export function createAssertFact(
 		if (fact) {
 			processFactActivations(deps, fact, type);
 		}
-		if (deps.crossTypeAccumulator) {
+		if (deps.crossTypeAccumulator || deps.tokenAccumulateManager) {
 			deps.syncAggregates();
 			aggregatesUpdated = true;
 		}
@@ -98,6 +101,11 @@ function processFactActivations(deps: FactSessionDeps, fact: Fact, type: string)
 		if (deps.crossTypeAccumulator) {
 			for (const token of activation.tokens) {
 				deps.crossTypeAccumulator.onTokenCreated(activation.ruleName, token);
+			}
+		}
+		if (deps.tokenAccumulateManager) {
+			for (const token of activation.tokens) {
+				deps.tokenAccumulateManager.onTokenCreated(activation.ruleName, token);
 			}
 		}
 		if (hasScopeConditions(compiled)) {
@@ -144,13 +152,18 @@ export function createRetractFact(deps: FactSessionDeps): (id: string) => boolea
 						deps.crossTypeAccumulator.onTokenRemoved(deactivation.ruleName, token);
 					}
 				}
+				if (deps.tokenAccumulateManager) {
+					for (const token of deactivation.removedTokens) {
+						deps.tokenAccumulateManager.onTokenRemoved(deactivation.ruleName, token);
+					}
+				}
 				const tokens = deps.betaEvaluator.getTokensForRule(deactivation.ruleName);
 				if (tokens.length === 0) {
 					deps.agenda.removeActivation(deactivation.ruleName);
 				}
 			}
 			deps.tms.retractByFact(id, deps.scope);
-			if (deps.crossTypeAccumulator) {
+			if (deps.crossTypeAccumulator || deps.tokenAccumulateManager) {
 				deps.syncAggregates();
 			}
 		}

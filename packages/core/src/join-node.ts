@@ -16,6 +16,15 @@ export interface JoinConstraint {
 	readonly rightField: string;
 }
 
+/** An inequality constraint specifying a comparison between two bound facts */
+export interface InequalityConstraint {
+	readonly leftBinding: string;
+	readonly leftField: string;
+	readonly rightBinding: string;
+	readonly rightField: string;
+	readonly operator: "$gt" | "$gte" | "$lt" | "$lte" | "$ne";
+}
+
 export interface JoinNode {
 	/** Left-activate: new token arrives from upstream beta node */
 	readonly leftActivate: (token: Token) => readonly Token[];
@@ -31,11 +40,48 @@ export interface JoinNode {
 
 export interface JoinNodeConfig {
 	readonly joinConstraints: readonly JoinConstraint[];
+	readonly inequalityConstraints?: readonly InequalityConstraint[];
+	/** When true, guard against a fact joining with itself (same fact ID in token bindings) */
+	readonly hasSelfJoinRisk?: boolean;
 }
 
 /** Resolve a dot-path field value from a fact's data */
 function resolveField(fact: Fact, fieldPath: string): unknown {
 	return collectPath(fact.data, fieldPath.split("."));
+}
+
+/** Compare two values with the given operator */
+function compareValues(left: unknown, right: unknown, op: string): boolean {
+	if (typeof left === "number" && typeof right === "number") {
+		switch (op) {
+			case "$gt":
+				return left > right;
+			case "$gte":
+				return left >= right;
+			case "$lt":
+				return left < right;
+			case "$lte":
+				return left <= right;
+			case "$ne":
+				return left !== right;
+		}
+	}
+	if (typeof left === "string" && typeof right === "string") {
+		switch (op) {
+			case "$gt":
+				return left > right;
+			case "$gte":
+				return left >= right;
+			case "$lt":
+				return left < right;
+			case "$lte":
+				return left <= right;
+			case "$ne":
+				return left !== right;
+		}
+	}
+	if (op === "$ne") return left !== right;
+	return false;
 }
 
 /** Check if all join constraints are satisfied for a token + right fact combination */
@@ -48,10 +94,30 @@ function constraintsSatisfied(
 	for (const c of constraints) {
 		const leftFact = c.leftBinding === rightBindingName ? rightFact : tokenBindings[c.leftBinding];
 		const rFact = c.rightBinding === rightBindingName ? rightFact : tokenBindings[c.rightBinding];
-		if (!leftFact || !rFact) return false; // Missing binding = constraint not satisfied
+		if (!leftFact || !rFact) return false;
 		const leftVal = resolveField(leftFact, c.leftField);
 		const rightVal = resolveField(rFact, c.rightField);
 		if (leftVal !== rightVal) return false;
+	}
+	return true;
+}
+
+/** Check if all inequality constraints are satisfied */
+function inequalitySatisfied(
+	constraints: readonly InequalityConstraint[],
+	tokenBindings: Readonly<Record<string, Fact>>,
+	rightBindingName: string,
+	rightFact: Fact,
+): boolean {
+	for (const c of constraints) {
+		const leftFact = c.leftBinding === rightBindingName ? rightFact : tokenBindings[c.leftBinding];
+		const rFact = c.rightBinding === rightBindingName ? rightFact : tokenBindings[c.rightBinding];
+		if (!leftFact || !rFact) return false;
+		const leftVal = resolveField(leftFact, c.leftField);
+		const rightVal = resolveField(rFact, c.rightField);
+		// Semantic: rightBinding.rightField <op> leftBinding.leftField
+		// e.g., b.tier $gt a.tier → compareValues(b.tier, a.tier, $gt)
+		if (!compareValues(rightVal, leftVal, c.operator)) return false;
 	}
 	return true;
 }
@@ -101,15 +167,20 @@ function getIndexedBindingNames(constraints: readonly JoinConstraint[]): readonl
 	return [...names];
 }
 
+/** Check if a fact's ID already appears in the token's bindings */
+function hasDuplicateFactId(token: Token, factId: string): boolean {
+	return Object.values(token.factBindings).some((f) => f.id === factId);
+}
+
 export function createJoinNode(config: JoinNodeConfig): JoinNode {
-	const { joinConstraints } = config;
+	const { joinConstraints, inequalityConstraints = [], hasSelfJoinRisk = false } = config;
 	const leftMemory: Token[] = [];
 	const rightMemory: Array<{ bindingName: string; fact: Fact }> = [];
 	const outputTokens: Token[] = [];
 
-	// Hash index: bindingName → (joinKey → Token[])
-	const hasConstraints = joinConstraints.length > 0;
-	const indexedBindings = hasConstraints ? getIndexedBindingNames(joinConstraints) : [];
+	const hasEqualityConstraints = joinConstraints.length > 0;
+	const hasInequalityConstraints = inequalityConstraints.length > 0;
+	const indexedBindings = hasEqualityConstraints ? getIndexedBindingNames(joinConstraints) : [];
 	const leftIndex = new Map<string, Map<string, Token[]>>();
 
 	function addToIndex(token: Token): void {
@@ -137,19 +208,26 @@ export function createJoinNode(config: JoinNodeConfig): JoinNode {
 		}
 	}
 
+	function passesAllFilters(token: Token, bindingName: string, fact: Fact): boolean {
+		if (!constraintsSatisfied(joinConstraints, token.factBindings, bindingName, fact)) return false;
+		if (hasInequalityConstraints && !inequalitySatisfied(inequalityConstraints, token.factBindings, bindingName, fact))
+			return false;
+		return true;
+	}
+
 	const leftActivate = (token: Token): readonly Token[] => {
 		leftMemory.push(token);
-		if (hasConstraints) addToIndex(token);
+		if (hasEqualityConstraints) addToIndex(token);
 		const produced: Token[] = [];
 		for (const entry of rightMemory) {
-			if (constraintsSatisfied(joinConstraints, token.factBindings, entry.bindingName, entry.fact)) {
-				const newToken: Token = {
-					id: generateTokenId(),
-					factBindings: { ...token.factBindings, [entry.bindingName]: entry.fact },
-				};
-				outputTokens.push(newToken);
-				produced.push(newToken);
-			}
+			if (hasSelfJoinRisk && hasDuplicateFactId(token, entry.fact.id)) continue;
+			if (!passesAllFilters(token, entry.bindingName, entry.fact)) continue;
+			const newToken: Token = {
+				id: generateTokenId(),
+				factBindings: { ...token.factBindings, [entry.bindingName]: entry.fact },
+			};
+			outputTokens.push(newToken);
+			produced.push(newToken);
 		}
 		return produced;
 	};
@@ -158,8 +236,7 @@ export function createJoinNode(config: JoinNodeConfig): JoinNode {
 		rightMemory.push({ bindingName, fact });
 		const produced: Token[] = [];
 
-		if (hasConstraints) {
-			// Use hash index for O(1) lookup
+		if (hasEqualityConstraints) {
 			const key = computeRightKey(fact, bindingName, joinConstraints);
 			if (key === null) return produced;
 			const inner = leftIndex.get(bindingName);
@@ -167,18 +244,28 @@ export function createJoinNode(config: JoinNodeConfig): JoinNode {
 			const candidates = inner.get(key);
 			if (!candidates) return produced;
 			for (const token of candidates) {
-				if (constraintsSatisfied(joinConstraints, token.factBindings, bindingName, fact)) {
-					const newToken: Token = {
-						id: generateTokenId(),
-						factBindings: { ...token.factBindings, [bindingName]: fact },
-					};
-					outputTokens.push(newToken);
-					produced.push(newToken);
-				}
+				if (hasSelfJoinRisk && hasDuplicateFactId(token, fact.id)) continue;
+				if (
+					hasInequalityConstraints &&
+					!inequalitySatisfied(inequalityConstraints, token.factBindings, bindingName, fact)
+				)
+					continue;
+				const newToken: Token = {
+					id: generateTokenId(),
+					factBindings: { ...token.factBindings, [bindingName]: fact },
+				};
+				outputTokens.push(newToken);
+				produced.push(newToken);
 			}
 		} else {
-			// No constraints: cross-product (linear scan)
+			// No equality constraints: linear scan with inequality post-filter
 			for (const token of leftMemory) {
+				if (hasSelfJoinRisk && hasDuplicateFactId(token, fact.id)) continue;
+				if (
+					hasInequalityConstraints &&
+					!inequalitySatisfied(inequalityConstraints, token.factBindings, bindingName, fact)
+				)
+					continue;
 				const newToken: Token = {
 					id: generateTokenId(),
 					factBindings: { ...token.factBindings, [bindingName]: fact },
@@ -191,13 +278,11 @@ export function createJoinNode(config: JoinNodeConfig): JoinNode {
 	};
 
 	const retractFact = (factId: string): readonly Token[] => {
-		// Remove from right memory
 		for (let i = rightMemory.length - 1; i >= 0; i--) {
 			if (rightMemory[i].fact.id === factId) {
 				rightMemory.splice(i, 1);
 			}
 		}
-		// Remove from left memory
 		let leftChanged = false;
 		for (let i = leftMemory.length - 1; i >= 0; i--) {
 			if (tokenContainsFact(leftMemory[i], factId)) {
@@ -205,9 +290,7 @@ export function createJoinNode(config: JoinNodeConfig): JoinNode {
 				leftChanged = true;
 			}
 		}
-		// Rebuild index if left memory changed
-		if (leftChanged && hasConstraints) rebuildIndex();
-		// Remove from output tokens
+		if (leftChanged && hasEqualityConstraints) rebuildIndex();
 		const removed: Token[] = [];
 		for (let i = outputTokens.length - 1; i >= 0; i--) {
 			if (tokenContainsFact(outputTokens[i], factId)) {
