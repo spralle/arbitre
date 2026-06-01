@@ -2,83 +2,121 @@
 // Accumulate node — maintains running aggregates over typed facts (L2).
 // ---------------------------------------------------------------------------
 
-import { getAccumulateFn } from "./accumulate-functions.js";
+import type { CustomAccumulateFunction } from "./accumulate-functions.js";
+import { COLLECT_FN_NAME, getAccumulateFn } from "./accumulate-functions.js";
+import { matchesFact } from "./fact-match.js";
 import type { Fact } from "./fact-memory.js";
 
 export interface AccumulateConfig {
-  readonly factType: string;
-  readonly field: string;
-  readonly fn: string;
-  readonly alias: string;
-  readonly filter?: Record<string, unknown> | undefined;
+	readonly factType: string;
+	readonly field: string;
+	readonly fn: string;
+	readonly alias: string;
+	readonly filter?: Record<string, unknown> | undefined;
+	/** For cross-type: binding name from a pattern rule to scope accumulation */
+	readonly binding?: string | undefined;
+	/** For cross-type: the rule name whose beta network provides tokens */
+	readonly rule?: string | undefined;
+	/** Time window in ms — only facts asserted within window contribute */
+	readonly window?: number | undefined;
 }
+
+export type AccumulateValue = number | null | readonly Record<string, unknown>[];
 
 export interface AccumulateNode {
-  readonly config: AccumulateConfig;
-  readonly addFact: (fact: Fact) => void;
-  readonly removeFact: (fact: Fact) => void;
-  readonly getValue: () => number | null;
-  readonly recompute: (facts: readonly Fact[]) => void;
-  readonly reset: () => void;
-  readonly getTrackedFactIds: () => readonly string[];
-}
-
-function matchesFilter(data: Readonly<Record<string, unknown>>, filter: Record<string, unknown>): boolean {
-  for (const key of Object.keys(filter)) {
-    if (data[key] !== filter[key]) return false;
-  }
-  return true;
-}
-
-function matchesFact(fact: Fact, config: AccumulateConfig): boolean {
-  if (fact.type !== config.factType) return false;
-  if (config.filter && !matchesFilter(fact.data, config.filter)) return false;
-  return true;
+	readonly config: AccumulateConfig;
+	readonly addFact: (fact: Fact) => void;
+	readonly removeFact: (fact: Fact) => void;
+	readonly getValue: () => AccumulateValue;
+	readonly recompute: (facts: readonly Fact[]) => void;
+	readonly reset: () => void;
+	readonly getTrackedFactIds: () => readonly string[];
 }
 
 function extractValue(fact: Fact, field: string): number | undefined {
-  const raw = fact.data[field];
-  return typeof raw === "number" ? raw : undefined;
+	const raw = fact.data[field];
+	return typeof raw === "number" ? raw : undefined;
 }
 
-export function createAccumulateNode(config: AccumulateConfig): AccumulateNode {
-  const aggFn = getAccumulateFn(config.fn);
-  const tracked = new Map<string, number>();
-  const isCount = config.fn === "$count";
+export function createAccumulateNode(
+	config: AccumulateConfig,
+	customFunctions?: Readonly<Record<string, CustomAccumulateFunction>>,
+): AccumulateNode {
+	if (config.fn === COLLECT_FN_NAME) {
+		return createCollectNode(config);
+	}
 
-  const addFact = (fact: Fact): void => {
-    if (!matchesFact(fact, config)) return;
-    if (isCount) {
-      tracked.set(fact.id, 0);
-      return;
-    }
-    const value = extractValue(fact, config.field);
-    if (value === undefined) return;
-    tracked.set(fact.id, value);
-  };
+	const aggFn = getAccumulateFn(config.fn, customFunctions);
+	const tracked = new Map<string, number>();
+	const isCount = config.fn === "$count";
 
-  const removeFact = (fact: Fact): void => {
-    tracked.delete(fact.id);
-  };
+	const addFact = (fact: Fact): void => {
+		if (!matchesFact(fact, config.factType, config.filter)) return;
+		if (isCount) {
+			tracked.set(fact.id, 0);
+			return;
+		}
+		const value = extractValue(fact, config.field);
+		if (value === undefined) return;
+		tracked.set(fact.id, value);
+	};
 
-  const getValue = (): number | null => {
-    return aggFn([...tracked.values()]);
-  };
+	const removeFact = (fact: Fact): void => {
+		tracked.delete(fact.id);
+	};
 
-  const recompute = (facts: readonly Fact[]): void => {
-    tracked.clear();
-    for (const fact of facts) {
-      addFact(fact);
-    }
-  };
+	const getValue = (): number | null => {
+		return aggFn([...tracked.values()]);
+	};
 
-  const reset = (): void => {
-    tracked.clear();
-  };
+	const recompute = (facts: readonly Fact[]): void => {
+		tracked.clear();
+		for (const fact of facts) {
+			addFact(fact);
+		}
+	};
 
-  const getTrackedFactIds = (): readonly string[] => {
-    return [...tracked.keys()];
-  };
+	const reset = (): void => {
+		tracked.clear();
+	};
 
-  return { config, addFact, removeFact, getValue, recompute, reset, getTrackedFactIds };
+	const getTrackedFactIds = (): readonly string[] => {
+		return [...tracked.keys()];
+	};
+
+	return { config, addFact, removeFact, getValue, recompute, reset, getTrackedFactIds };
+}
+
+function createCollectNode(config: AccumulateConfig): AccumulateNode {
+	const collected = new Map<string, Record<string, unknown>>();
+
+	const addFact = (fact: Fact): void => {
+		if (!matchesFact(fact, config.factType, config.filter)) return;
+		collected.set(fact.id, fact.data);
+	};
+
+	const removeFact = (fact: Fact): void => {
+		collected.delete(fact.id);
+	};
+
+	const getValue = (): readonly Record<string, unknown>[] => {
+		return [...collected.values()];
+	};
+
+	const recompute = (facts: readonly Fact[]): void => {
+		collected.clear();
+		for (const fact of facts) {
+			addFact(fact);
+		}
+	};
+
+	const reset = (): void => {
+		collected.clear();
+	};
+
+	const getTrackedFactIds = (): readonly string[] => {
+		return [...collected.keys()];
+	};
+
+	return { config, addFact, removeFact, getValue, recompute, reset, getTrackedFactIds };
 }

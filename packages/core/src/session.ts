@@ -1,21 +1,34 @@
+import { createAccumulateManager } from "./accumulate-manager.js";
 import { createAgenda } from "./agenda.js";
 import { createAlphaNetwork } from "./alpha-network.js";
+import { createBetaEvaluator } from "./beta-evaluator.js";
+import type { Token } from "./beta-node.js";
 import type {
-  CompiledRule,
-  FiringResult,
-  ProductionRule,
-  RuleSession,
-  SessionConfig,
-  SubscriptionCallback,
-  Unsubscribe,
+	CompiledRule,
+	FiringResult,
+	ProductionRule,
+	RuleSession,
+	SessionConfig,
+	SubscriptionCallback,
+	Unsubscribe,
 } from "./contracts.js";
+import type { CrossTypeAccumulator } from "./cross-type-accumulate.js";
+import { createCrossTypeAccumulator } from "./cross-type-accumulate.js";
 import { ArbiterError, ArbiterErrorCode } from "./errors.js";
+import type { ExpiryTracker } from "./expiry-tracker.js";
+import { createExpiryTracker } from "./expiry-tracker.js";
 import { createOperatorRegistry } from "./expression-operators.js";
+import { createFactMemory } from "./fact-memory.js";
+import { createFactRegistry } from "./fact-registry.js";
 import type { FireContext, FireLimits } from "./fire-cycle.js";
-import { fireCycle } from "./fire-cycle.js";
+import { evaluateCondition, fireCycle } from "./fire-cycle.js";
 import { validatePath } from "./path-utils.js";
 import { compileRule } from "./rule-compiler.js";
 import { createScopeManager } from "./scope.js";
+import { createAssertFact, createGetFacts, createRetractFact } from "./session-facts.js";
+import { createCancelSchedule, createScheduleRule, createTick } from "./session-temporal.js";
+import { TEMPORAL_OPERATORS } from "./temporal-operators.js";
+import { createTimerQueue } from "./timer-queue.js";
 import { createTms } from "./tms.js";
 
 // ---------------------------------------------------------------------------
@@ -23,156 +36,319 @@ import { createTms } from "./tms.js";
 // ---------------------------------------------------------------------------
 
 export function createSession<TState = Record<string, unknown>>(config?: SessionConfig<TState>): RuleSession<TState> {
-  const scope = createScopeManager(config?.initialState);
-  const network = createAlphaNetwork();
-  const agenda = createAgenda();
-  const tms = createTms(config?.tms);
-  const operators = createOperatorRegistry(config?.operators?.custom);
+	const scope = createScopeManager(config?.initialState);
+	const network = createAlphaNetwork();
+	const agenda = createAgenda();
+	const tms = createTms(config?.tms);
+	const customOps = config?.clock ? { ...TEMPORAL_OPERATORS, ...config?.operators?.custom } : config?.operators?.custom;
+	const operators = createOperatorRegistry(customOps);
 
-  const compiledRules = new Map<string, CompiledRule>();
-  const subscriptions = new Map<string, Set<SubscriptionCallback>>();
-  const ruleConditionState = new Map<string, boolean>();
-  let disposed = false;
+	// Fact support (optional — only active when factTypes provided)
+	const factTypesConfig = config?.factTypes;
+	const factRegistry = factTypesConfig ? createFactRegistry() : undefined;
+	const factMemory = factTypesConfig ? createFactMemory() : undefined;
+	const betaEvaluator = createBetaEvaluator();
+	const customFnNameSet: ReadonlySet<string> | undefined = config?.accumulateFunctions
+		? new Set(Object.keys(config.accumulateFunctions))
+		: undefined;
 
-  const limits: FireLimits = {
-    maxCycles: config?.limits?.maxCycles ?? 100,
-    maxRuleFirings: config?.limits?.maxRuleFirings ?? 1000,
-    warnAtCycles: config?.limits?.warnAtCycles ?? 80,
-    warnAtFirings: config?.limits?.warnAtFirings ?? 800,
-  };
+	if (factRegistry && factTypesConfig) {
+		for (const def of factTypesConfig) {
+			factRegistry.register(def);
+		}
+	}
 
-  for (const rule of config?.rules ?? []) {
-    registerRuleInternal(rule);
-  }
+	// Accumulate support (optional — lazily created if rules declare inline accumulates)
+	const singleTypeAccumulates = config?.accumulates?.filter((c) => !c.binding || !c.rule);
+	let accumulateManager = singleTypeAccumulates?.length
+		? createAccumulateManager(singleTypeAccumulates, config?.accumulateFunctions, config?.clock)
+		: undefined;
 
-  function assertNotDisposed(): void {
-    if (disposed) {
-      throw new ArbiterError(ArbiterErrorCode.SESSION_DISPOSED, "Session has been disposed");
-    }
-  }
+	// Cross-type accumulate support (join-scoped aggregation)
+	let crossTypeAccumulator: CrossTypeAccumulator | undefined = config?.accumulates?.length
+		? createCrossTypeAccumulator(config.accumulates, config.accumulateFunctions)
+		: undefined;
 
-  function buildContext(): FireContext {
-    const ctx: FireContext = {
-      scope,
-      network,
-      agenda,
-      tms,
-      compiledRules,
-      operators,
-      limits,
-      ruleConditionState,
-    };
-    if (config?.thenOperators) {
-      return { ...ctx, thenOperators: config.thenOperators };
-    }
-    return ctx;
-  }
+	function syncAggregates(): void {
+		const agg: Record<string, unknown> = {};
+		if (accumulateManager) {
+			Object.assign(agg, accumulateManager.getAggregates());
+		}
+		if (crossTypeAccumulator) {
+			Object.assign(agg, crossTypeAccumulator.getValues());
+		}
+		if (Object.keys(agg).length > 0) {
+			scope.set("$aggregates", agg, "__accumulate__");
+		}
+	}
 
-  function registerRuleInternal(rule: ProductionRule<TState>): void {
-    const compiled = compileRule(rule as ProductionRule<unknown>);
-    compiledRules.set(compiled.name, compiled);
-    network.addRule(compiled);
-  }
+	const compiledRules = new Map<string, CompiledRule>();
+	const subscriptions = new Map<string, Set<SubscriptionCallback>>();
+	const ruleConditionState = new Map<string, boolean>();
+	const pendingTokens = new Map<string, Token>();
+	let disposed = false;
 
-  function registerRule(rule: ProductionRule<TState>): void {
-    assertNotDisposed();
-    registerRuleInternal(rule);
-  }
+	const clock = config?.clock;
+	const timerQueue = clock ? createTimerQueue() : undefined;
 
-  function removeRule(name: string): void {
-    assertNotDisposed();
-    const compiled = compiledRules.get(name);
-    if (!compiled) return;
-    network.removeRule(name);
-    agenda.removeActivation(name);
-    tms.removeRule(name);
-    scope.revertRule(name);
-    scope.clearWriteRecords(name);
-    ruleConditionState.delete(name);
-    compiledRules.delete(name);
-  }
+	// Expiry tracker: only created when clock exists and rules have expires
+	const expiryMap = new Map<string, number>();
+	for (const rule of config?.rules ?? []) {
+		if (rule.expires !== undefined) {
+			expiryMap.set(rule.name, rule.expires);
+		}
+	}
+	const expiryTracker: ExpiryTracker | undefined =
+		clock && expiryMap.size > 0 ? createExpiryTracker(expiryMap) : undefined;
 
-  function assertPath(path: string, value: unknown): void {
-    assertNotDisposed();
-    validatePath(path);
-    scope.set(path, value, "__assert__");
-  }
+	function injectClockTime(): void {
+		if (clock) {
+			scope.set("$meta.$now", clock.now(), "__clock__");
+		}
+	}
 
-  function retract(path: string): void {
-    assertNotDisposed();
-    validatePath(path);
-    scope.unset(path, "__assert__");
-  }
+	const limits: FireLimits = {
+		maxCycles: config?.limits?.maxCycles ?? 100,
+		maxRuleFirings: config?.limits?.maxRuleFirings ?? 1000,
+		warnAtCycles: config?.limits?.warnAtCycles ?? 80,
+		warnAtFirings: config?.limits?.warnAtFirings ?? 800,
+	};
 
-  function fire(): FiringResult {
-    assertNotDisposed();
-    const ctx = buildContext();
-    const result = fireCycle(ctx);
-    notifySubscribers(result.changes);
-    return result;
-  }
+	for (const rule of config?.rules ?? []) {
+		registerRuleInternal(rule);
+	}
 
-  function notifySubscribers(changes: readonly { path: string; newValue: unknown; previousValue: unknown }[]): void {
-    for (const change of changes) {
-      const callbacks = subscriptions.get(change.path);
-      if (!callbacks) continue;
-      for (const cb of callbacks) {
-        cb(change.newValue, change.previousValue);
-      }
-    }
-  }
+	function assertNotDisposed(): void {
+		if (disposed) {
+			throw new ArbiterError(ArbiterErrorCode.SESSION_DISPOSED, "Session has been disposed");
+		}
+	}
 
-  function subscribe(path: string, callback: SubscriptionCallback): Unsubscribe {
-    assertNotDisposed();
-    let set = subscriptions.get(path);
-    if (!set) {
-      set = new Set();
-      subscriptions.set(path, set);
-    }
-    set.add(callback);
-    return () => {
-      set.delete(callback);
-    };
-  }
+	function buildContext(): FireContext {
+		const ctx: FireContext = {
+			scope,
+			network,
+			agenda,
+			tms,
+			compiledRules,
+			operators,
+			limits,
+			ruleConditionState,
+			pendingTokens,
+		};
+		if (config?.thenOperators) {
+			return { ...ctx, thenOperators: config.thenOperators };
+		}
+		return ctx;
+	}
 
-  function update(path: string, value: unknown): FiringResult {
-    assertPath(path, value);
-    return fire();
-  }
+	function registerRuleInternal(rule: ProductionRule<TState>): void {
+		const compiled = compileRule(rule as ProductionRule<unknown>, customFnNameSet);
+		compiledRules.set(compiled.name, compiled);
+		network.addRule(compiled);
 
-  function getState(): Readonly<Record<string, unknown>> {
-    assertNotDisposed();
-    return scope.getState();
-  }
+		if (rule.expires !== undefined) {
+			expiryMap.set(rule.name, rule.expires);
+		}
 
-  function getPath(path: string): unknown {
-    assertNotDisposed();
-    return scope.get(path);
-  }
+		if (compiled.hasPatterns && compiled.patterns) {
+			const sourcePatterns = rule.patterns ?? [];
+			betaEvaluator.registerRule(compiled.name, sourcePatterns);
+		}
 
-  function setFocus(group: string): void {
-    assertNotDisposed();
-    agenda.setFocus(group);
-  }
+		if (compiled.accumulates?.length) {
+			if (!accumulateManager) {
+				accumulateManager = createAccumulateManager([], config?.accumulateFunctions, clock);
+			}
+			if (!crossTypeAccumulator) {
+				crossTypeAccumulator = createCrossTypeAccumulator([], config?.accumulateFunctions);
+			}
+			for (const acc of compiled.accumulates) {
+				accumulateManager.addConfig(acc);
+			}
+		}
+	}
 
-  function dispose(): void {
-    disposed = true;
-    compiledRules.clear();
-    subscriptions.clear();
-    ruleConditionState.clear();
-  }
+	function registerRule(rule: ProductionRule<TState>): void {
+		assertNotDisposed();
+		registerRuleInternal(rule);
+	}
 
-  return {
-    registerRule,
-    removeRule,
-    assert: assertPath,
-    retract,
-    fire,
-    subscribe,
-    update,
-    getState,
-    getPath,
-    setFocus,
-    dispose,
-  };
+	function removeRule(name: string): void {
+		assertNotDisposed();
+		const compiled = compiledRules.get(name);
+		if (!compiled) return;
+		network.removeRule(name);
+		agenda.removeActivation(name);
+		tms.removeRule(name);
+		scope.revertRule(name);
+		scope.clearWriteRecords(name);
+		ruleConditionState.delete(name);
+		betaEvaluator.removeRule(name);
+		compiledRules.delete(name);
+	}
+
+	function assertPath(path: string, value: unknown): void {
+		assertNotDisposed();
+		validatePath(path);
+		scope.set(path, value, "__assert__");
+	}
+
+	function retract(path: string): void {
+		assertNotDisposed();
+		validatePath(path);
+		scope.unset(path, "__assert__");
+	}
+
+	function fire(): FiringResult {
+		assertNotDisposed();
+		injectClockTime();
+		const ctx = buildContext();
+		const result = fireCycle(ctx);
+		if (expiryTracker && clock) {
+			for (const ruleName of expiryMap.keys()) {
+				const isActive = ruleConditionState.get(ruleName) ?? false;
+				if (!isActive) {
+					expiryTracker.reset(ruleName);
+				}
+			}
+			for (const change of result.changes) {
+				if (expiryMap.has(change.ruleName)) {
+					expiryTracker.onRuleActivated(change.ruleName, clock.now());
+				}
+			}
+		}
+		trackPatternRuleProvenance(result);
+		notifySubscribers(result.changes);
+		return result;
+	}
+
+	function trackPatternRuleProvenance(result: FiringResult): void {
+		for (const change of result.changes) {
+			const rule = compiledRules.get(change.ruleName);
+			if (!rule?.hasPatterns) continue;
+			const tokens = betaEvaluator.getTokensForRule(rule.name);
+			const factIds: string[] = [];
+			for (const token of tokens) {
+				for (const fact of Object.values(token.factBindings)) {
+					if (!factIds.includes(fact.id)) factIds.push(fact.id);
+				}
+			}
+			if (factIds.length > 0) {
+				tms.recordFactDependency(rule.name, factIds);
+			}
+		}
+	}
+
+	function notifySubscribers(changes: readonly { path: string; newValue: unknown; previousValue: unknown }[]): void {
+		for (const change of changes) {
+			const callbacks = subscriptions.get(change.path);
+			if (!callbacks) continue;
+			for (const cb of callbacks) {
+				cb(change.newValue, change.previousValue);
+			}
+		}
+	}
+
+	function subscribe(path: string, callback: SubscriptionCallback): Unsubscribe {
+		assertNotDisposed();
+		let set = subscriptions.get(path);
+		if (!set) {
+			set = new Set();
+			subscriptions.set(path, set);
+		}
+		set.add(callback);
+		return () => {
+			set.delete(callback);
+		};
+	}
+
+	function update(path: string, value: unknown): FiringResult {
+		assertPath(path, value);
+		return fire();
+	}
+
+	function getState(): Readonly<Record<string, unknown>> {
+		assertNotDisposed();
+		return scope.getState();
+	}
+
+	function getPath(path: string): unknown {
+		assertNotDisposed();
+		return scope.get(path);
+	}
+
+	function setFocus(group: string): void {
+		assertNotDisposed();
+		agenda.setFocus(group);
+	}
+
+	function dispose(): void {
+		disposed = true;
+		compiledRules.clear();
+		subscriptions.clear();
+		ruleConditionState.clear();
+	}
+
+	const autoFire = config?.autoFireOnFactChange !== false;
+
+	// Fact operations (extracted to session-facts.ts)
+	const factDeps = {
+		assertNotDisposed,
+		factRegistry,
+		factMemory,
+		accumulateManager,
+		crossTypeAccumulator,
+		betaEvaluator,
+		scope,
+		compiledRules,
+		agenda,
+		tms,
+		pendingTokens,
+		syncAggregates,
+		evaluateCondition,
+		autoFire,
+		fire,
+	};
+	const assertFact = createAssertFact(factDeps);
+	const retractFact = createRetractFact(factDeps);
+	const getFacts = createGetFacts(factDeps);
+
+	// Temporal operations (extracted to session-temporal.ts)
+	const temporalDeps = {
+		assertNotDisposed,
+		clock,
+		timerQueue,
+		expiryTracker,
+		accumulateManager,
+		scope,
+		compiledRules,
+		agenda,
+		ruleConditionState,
+		syncAggregates,
+		fire,
+	};
+	const tick = createTick(temporalDeps);
+	const scheduleRule = createScheduleRule(temporalDeps);
+	const cancelSchedule = createCancelSchedule(temporalDeps);
+
+	return {
+		registerRule,
+		removeRule,
+		assert: assertPath,
+		retract,
+		fire,
+		subscribe,
+		update,
+		getState,
+		getPath,
+		setFocus,
+		dispose,
+		assertFact,
+		retractFact,
+		getFacts,
+		tick,
+		scheduleRule,
+		cancelSchedule,
+	};
 }
