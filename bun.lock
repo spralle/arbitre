@@ -16,7 +16,7 @@
       "name": "@arbitre/core",
       "version": "0.1.0",
       "devDependencies": {
-        "kuery": "file:../../../kuery",
+        "kuery": "file:../../../../../kuery",
       },
       "peerDependencies": {
         "kuery": ">=0.1.0",
@@ -494,7 +494,7 @@
 
     "why-is-node-running": ["why-is-node-running@2.3.0", "", { "dependencies": { "siginfo": "^2.0.0", "stackback": "0.0.2" }, "bin": { "why-is-node-running": "cli.js" } }, "sha512-hUrmaWBdVDcxvYqnyh09zunKzROWjbZTiNy8dBEjkS7ehEDQibXJ7XvlmtbwuTclUiIyN+CyXQD4Vmko8fNm8w=="],
 
-    "@arbitre/core/kuery": ["kuery@file:../kuery", { "devDependencies": { "tsup": "^8.0.0", "typescript": "^5.7.0", "vitest": "^3.0.0" } }],
+    "@arbitre/core/kuery": ["kuery@file:../../../kuery", { "devDependencies": { "tsup": "^8.0.0", "typescript": "^5.7.0", "vitest": "^3.0.0" } }],
 
     "@manypkg/find-root/fs-extra": ["fs-extra@8.1.0", "", { "dependencies": { "graceful-fs": "^4.2.0", "jsonfile": "^4.0.0", "universalify": "^0.1.0" } }, "sha512-yhlQgA6mnOJUKOsRUFsgJdQCvkKhcz8tlZG5HBQfReYZy46OwLcY+Zia0mtdHsOo9y/hP+CxMN0TU9QxoOtG4g=="],
 
