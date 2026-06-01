@@ -1,5 +1,11 @@
 # @arbitre/core
 
+## 0.2.0
+
+### Minor Changes
+
+- Add checkpoint/rollback API for speculative state evaluation
+
 ## 0.1.0
 
 ### Minor Changes
