@@ -32,6 +32,7 @@ export interface ScopeManager {
 	readonly getState: () => Readonly<Record<string, unknown>>;
 	readonly getReadView: () => Readonly<Record<string, unknown>>;
 	readonly snapshot: () => unknown;
+	readonly restore: (snapshot: unknown) => void;
 	readonly resolveNamespace: (path: string) => { namespace: Namespace; localPath: string };
 }
 
@@ -263,6 +264,20 @@ export function createScopeManager(initialState?: Readonly<Record<string, unknow
 		return structuredClone(stores);
 	}
 
+	function restoreState(snapshot: unknown): void {
+		const snapped = snapshot as Record<Namespace, Record<string, unknown>>;
+		for (const ns of ["root", "$ui", "$state", "$meta", "$contributions"] as const) {
+			const data = snapped[ns];
+			// Clear and repopulate
+			for (const key of Object.keys(stores[ns])) {
+				delete stores[ns][key];
+			}
+			Object.assign(stores[ns], data);
+		}
+		provenanceMap.clear();
+		snapshots.clear();
+	}
+
 	function getReadView(): Readonly<Record<string, unknown>> {
 		const result: Record<string, unknown> = { ...stores.root };
 		for (const ns of ["$ui", "$state", "$meta", "$contributions"] as const) {
@@ -286,6 +301,7 @@ export function createScopeManager(initialState?: Readonly<Record<string, unknow
 		getState,
 		getReadView,
 		snapshot: snapshotState,
+		restore: restoreState,
 		resolveNamespace,
 	};
 }

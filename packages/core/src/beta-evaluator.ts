@@ -1,6 +1,7 @@
 import type { BetaNetwork } from "./beta-network.js";
 import { compileBetaNetwork } from "./beta-network.js";
 import type { Token } from "./beta-node.js";
+import { matchesFilter } from "./fact-match.js";
 import type { Fact } from "./fact-memory.js";
 import type { FactPattern } from "./fact-pattern.js";
 
@@ -86,6 +87,7 @@ export function createBetaEvaluator(
 			// Find all patterns matching this fact type (supports self-joins)
 			const matchingPatterns = entry.patterns.filter((p) => p.$fact === factType);
 			for (const pattern of matchingPatterns) {
+				if (pattern.$where && !matchesFilter(fact.data, pattern.$where)) continue;
 				const tokens = entry.network.activate(pattern.$bind, fact);
 				if (tokens.length > 0) {
 					activations.push({ ruleName, tokens });

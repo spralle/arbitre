@@ -5,6 +5,11 @@ import type { ScopeManager } from "./scope.js";
 // Truth Maintenance System (ADR §5)
 // Auto-retracts rule writes when conditions flip true→false.
 // Extended: tracks fact-dependent derivations for join retraction.
+//
+// TMS modes:
+// - "ui-contributions" (default): only auto-retracts paths under $ui.* and $contributions.*
+// - "all": auto-retracts ALL paths written by a rule when its condition becomes false,
+//   including root namespace paths like "foo.bar"
 // ---------------------------------------------------------------------------
 
 /** Provenance record linking a rule's writes to contributing fact IDs */

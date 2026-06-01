@@ -42,6 +42,8 @@ export interface FireContext {
 	readonly thenOperators?: ThenOperatorRegistry | undefined;
 	/** Token bindings pending injection for pattern-triggered rules */
 	readonly pendingTokens?: Map<string, Token> | undefined;
+	/** Tracks else-branch firing state across fire cycles */
+	readonly elseTracking?: { wasActive: Set<string>; elseFired: Set<string> } | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -83,6 +85,8 @@ export function reevaluateRule(rule: CompiledRule, ctx: FireContext): readonly S
 	if (isActive && !wasActive) {
 		ctx.agenda.addActivation(rule);
 		ctx.tms.ruleActivated(rule);
+		ctx.elseTracking?.wasActive.add(rule.name);
+		ctx.elseTracking?.elseFired.delete(rule.name);
 	} else if (isActive && wasActive) {
 		ctx.agenda.addActivation(rule);
 	} else if (!isActive && wasActive) {
@@ -109,6 +113,8 @@ export function evaluateAllRules(ctx: FireContext): readonly StateChange[] {
 		if (isActive && !wasActive) {
 			ctx.agenda.addActivation(rule);
 			ctx.tms.ruleActivated(rule);
+			ctx.elseTracking?.wasActive.add(rule.name);
+			ctx.elseTracking?.elseFired.delete(rule.name);
 		} else if (!isActive && wasActive) {
 			ctx.agenda.removeActivation(rule.name);
 			retractions.push(...buildRetractionChanges(rule, ctx));
@@ -125,10 +131,14 @@ export function executeElseBranches(ctx: FireContext, changes: StateChange[]): v
 	for (const rule of ctx.compiledRules.values()) {
 		if (!rule.enabled || !rule.elseActions) continue;
 		const isActive = ctx.ruleConditionState.get(rule.name) ?? false;
-		if (!isActive) {
-			const elseChanges = executeStages(rule.elseActions, rule.name, ctx);
-			changes.push(...elseChanges);
-		}
+		if (isActive) continue;
+		// Only fire else on transition from active → inactive (not for never-active rules)
+		const wasEverActive = ctx.elseTracking?.wasActive.has(rule.name) ?? false;
+		const alreadyFiredElse = ctx.elseTracking?.elseFired.has(rule.name) ?? false;
+		if (!wasEverActive || alreadyFiredElse) continue;
+		const elseChanges = executeStages(rule.elseActions, rule.name, ctx);
+		changes.push(...elseChanges);
+		ctx.elseTracking?.elseFired.add(rule.name);
 	}
 }
 
@@ -181,7 +191,12 @@ export function fireCycle(ctx: FireContext): FiringResult {
 	for (const c of evaluateAllRules(ctx)) {
 		changes.push(c);
 	}
+	const elseStartIdx = changes.length;
 	executeElseBranches(ctx, changes);
+	const elseChanges = changes.slice(elseStartIdx);
+	if (elseChanges.length > 0) {
+		propagateChanges(elseChanges, ctx, changes);
+	}
 
 	while (!ctx.agenda.isEmpty()) {
 		cycles++;

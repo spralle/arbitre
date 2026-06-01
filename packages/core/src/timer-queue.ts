@@ -57,17 +57,21 @@ export function createTimerQueue(): TimerQueue {
 
 	function advanceDueTimers(now: number): readonly string[] {
 		const firedNames: string[] = [];
+		const due: TimerEntry[] = [];
 		for (const entry of timers.values()) {
 			if (entry.fireAt <= now) {
-				firedNames.push(entry.ruleName);
-				if (entry.repeat) {
-					timers.set(entry.ruleName, {
-						...entry,
-						fireAt: entry.fireAt + entry.interval,
-					});
-				} else {
-					timers.delete(entry.ruleName);
-				}
+				due.push(entry);
+			}
+		}
+		for (const entry of due) {
+			firedNames.push(entry.ruleName);
+			if (entry.repeat) {
+				timers.set(entry.ruleName, {
+					...entry,
+					fireAt: entry.fireAt + entry.interval,
+				});
+			} else {
+				timers.delete(entry.ruleName);
 			}
 		}
 		return firedNames;
