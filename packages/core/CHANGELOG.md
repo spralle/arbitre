@@ -5,6 +5,10 @@
 ### Minor Changes
 
 - Add checkpoint/rollback API for speculative state evaluation
+- Self-exclusion in self-joins: when multiple patterns match the same fact type, tokens no longer include duplicate fact instances across bindings
+- Inequality join predicates: `$join` supports comparison operators (`$gt`, `$gte`, `$lt`, `$lte`, `$ne`) with equality-first hash index optimization
+- Token-binding access in rule actions: `$binding.field` references in `then` expressions resolve to matched fact data from the current token
+- Multi-token accumulate: accumulate nodes can be driven by a rule's beta network tokens with per-token expression evaluation
 
 ## 0.1.0
 
