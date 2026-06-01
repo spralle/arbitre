@@ -20,12 +20,19 @@ export interface FactMemory {
 
 export function createFactMemory(): FactMemory {
 	const facts = new Map<string, Fact>();
+	const typeIndex = new Map<string, Map<string, Fact>>();
 	let counter = 0;
 
 	const assertFact = (type: string, data: Readonly<Record<string, unknown>>): string => {
 		const id = `fact-${counter++}`;
 		const fact: Fact = { id, type, data };
 		facts.set(id, fact);
+		let byType = typeIndex.get(type);
+		if (!byType) {
+			byType = new Map();
+			typeIndex.set(type, byType);
+		}
+		byType.set(id, fact);
 		return id;
 	};
 
@@ -33,13 +40,22 @@ export function createFactMemory(): FactMemory {
 		const fact = facts.get(factId);
 		if (fact) {
 			facts.delete(factId);
+			const byType = typeIndex.get(fact.type);
+			if (byType) {
+				byType.delete(factId);
+				if (byType.size === 0) typeIndex.delete(fact.type);
+			}
 		}
 		return fact;
 	};
 
 	const getFact = (factId: string): Fact | undefined => facts.get(factId);
 
-	const getFactsByType = (type: string): readonly Fact[] => [...facts.values()].filter((f) => f.type === type);
+	const getFactsByType = (type: string): readonly Fact[] => {
+		const byType = typeIndex.get(type);
+		if (!byType) return [];
+		return [...byType.values()];
+	};
 
 	const getAllFacts = (): readonly Fact[] => [...facts.values()];
 
@@ -47,6 +63,7 @@ export function createFactMemory(): FactMemory {
 
 	const clear = (): void => {
 		facts.clear();
+		typeIndex.clear();
 	};
 
 	return { assertFact, retractFact, getFact, getFactsByType, getAllFacts, size, clear };

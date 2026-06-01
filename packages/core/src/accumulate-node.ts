@@ -49,28 +49,50 @@ export function createAccumulateNode(
 	const aggFn = getAccumulateFn(config.fn, customFunctions);
 	const tracked = new Map<string, number>();
 	const isCount = config.fn === "$count";
+	const fnName = config.fn;
+	let runningSum = 0;
+	let runningCount = 0;
 
 	const addFact = (fact: Fact): void => {
 		if (!matchesFact(fact, config.factType, config.filter)) return;
 		if (isCount) {
 			tracked.set(fact.id, 0);
+			runningCount++;
 			return;
 		}
 		const value = extractValue(fact, config.field);
 		if (value === undefined) return;
 		tracked.set(fact.id, value);
+		runningSum += value;
+		runningCount++;
 	};
 
 	const removeFact = (fact: Fact): void => {
-		tracked.delete(fact.id);
+		const value = tracked.get(fact.id);
+		if (value !== undefined) {
+			tracked.delete(fact.id);
+			runningSum -= value;
+			runningCount--;
+		}
 	};
 
 	const getValue = (): number | null => {
-		return aggFn([...tracked.values()]);
+		switch (fnName) {
+			case "$sum":
+				return runningSum;
+			case "$count":
+				return runningCount;
+			case "$avg":
+				return runningCount === 0 ? null : runningSum / runningCount;
+			default:
+				return aggFn([...tracked.values()]);
+		}
 	};
 
 	const recompute = (facts: readonly Fact[]): void => {
 		tracked.clear();
+		runningSum = 0;
+		runningCount = 0;
 		for (const fact of facts) {
 			addFact(fact);
 		}
@@ -78,6 +100,8 @@ export function createAccumulateNode(
 
 	const reset = (): void => {
 		tracked.clear();
+		runningSum = 0;
+		runningCount = 0;
 	};
 
 	const getTrackedFactIds = (): readonly string[] => {

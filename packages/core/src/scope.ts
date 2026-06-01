@@ -103,6 +103,7 @@ export function createScopeManager(
 
 	const provenanceMap = new Map<string, WriteRecord[]>();
 	const snapshots = new Map<string, unknown>();
+	let cachedReadView: Record<string, unknown> | null = null;
 
 	function resolveNamespace(path: string): { namespace: string; localPath: string } {
 		for (const ns of registeredNamespaces) {
@@ -164,6 +165,7 @@ export function createScopeManager(
 		const segments = splitPath(localPath);
 		const prev = deepGet(getStore(namespace), segments);
 		deepSet(getStore(namespace), segments, value);
+		cachedReadView = null;
 		return recordWrite(path, value, prev, ruleName);
 	}
 
@@ -174,6 +176,7 @@ export function createScopeManager(
 		const segments = splitPath(localPath);
 		const prev = deepGet(getStore(namespace), segments);
 		deepDelete(getStore(namespace), segments);
+		cachedReadView = null;
 		return recordWrite(path, undefined, prev, ruleName);
 	}
 
@@ -187,6 +190,7 @@ export function createScopeManager(
 		const arr = Array.isArray(current) ? [...current, value] : [value];
 		const prev = current;
 		deepSet(store, segments, arr);
+		cachedReadView = null;
 		return recordWrite(path, arr, prev, ruleName);
 	}
 
@@ -207,6 +211,7 @@ export function createScopeManager(
 		const base = typeof current === "number" ? current : 0;
 		const newVal = base + amount;
 		deepSet(store, segments, newVal);
+		cachedReadView = null;
 		return recordWrite(path, newVal, prev, ruleName);
 	}
 
@@ -224,6 +229,7 @@ export function createScopeManager(
 		const base = isRecord(current) ? current : {};
 		const merged = { ...base, ...value };
 		deepSet(store, segments, merged);
+		cachedReadView = null;
 		return recordWrite(path, merged, prev, ruleName);
 	}
 
@@ -248,6 +254,7 @@ export function createScopeManager(
 		}
 		provenanceMap.delete(ruleName);
 		clearSnapshotsForRule(ruleName);
+		cachedReadView = null;
 		return paths;
 	}
 
@@ -283,15 +290,19 @@ export function createScopeManager(
 		}
 		provenanceMap.clear();
 		snapshots.clear();
+		cachedReadView = null;
 	}
 
 	function getReadView(): Readonly<Record<string, unknown>> {
+		if (cachedReadView) return cachedReadView;
 		const result: Record<string, unknown> = { ...stores.root };
 		for (const ns of registeredNamespaces) {
-			if (Object.keys(stores[ns]!).length > 0) {
-				result[ns] = stores[ns]!;
+			const store = stores[ns]!;
+			if (Object.keys(store).length > 0) {
+				result[ns] = store;
 			}
 		}
+		cachedReadView = result;
 		return result;
 	}
 
