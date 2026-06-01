@@ -103,6 +103,8 @@ export function createScopeManager(
 
 	const provenanceMap = new Map<string, WriteRecord[]>();
 	const snapshots = new Map<string, unknown>();
+	// Secondary index: ruleName → set of snapshot keys for O(1) clearSnapshotsForRule
+	const snapshotsByRule = new Map<string, Set<string>>();
 	let cachedReadView: Record<string, unknown> | null = null;
 
 	function resolveNamespace(path: string): { namespace: string; localPath: string } {
@@ -118,11 +120,12 @@ export function createScopeManager(
 	}
 
 	function clearSnapshotsForRule(ruleName: string): void {
-		for (const key of [...snapshots.keys()]) {
-			if (key.startsWith(`${ruleName}:`)) {
-				snapshots.delete(key);
-			}
+		const keys = snapshotsByRule.get(ruleName);
+		if (!keys) return;
+		for (const key of keys) {
+			snapshots.delete(key);
 		}
+		snapshotsByRule.delete(ruleName);
 	}
 
 	function getStore(ns: string): Record<string, unknown> {
@@ -137,10 +140,16 @@ export function createScopeManager(
 	}
 
 	function recordWrite(path: string, value: unknown, snapshotValue: unknown, ruleName: string): WriteRecord {
-		const _record: WriteRecord = { path, value, snapshotValue, ruleName };
 		const key = snapshotKey(ruleName, path);
 		if (!snapshots.has(key)) {
 			snapshots.set(key, safeClone(snapshotValue));
+			// Track in secondary index
+			let ruleKeys = snapshotsByRule.get(ruleName);
+			if (!ruleKeys) {
+				ruleKeys = new Set();
+				snapshotsByRule.set(ruleName, ruleKeys);
+			}
+			ruleKeys.add(key);
 		}
 		let records = provenanceMap.get(ruleName);
 		if (!records) {
@@ -290,6 +299,7 @@ export function createScopeManager(
 		}
 		provenanceMap.clear();
 		snapshots.clear();
+		snapshotsByRule.clear();
 		cachedReadView = null;
 	}
 

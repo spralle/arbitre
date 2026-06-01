@@ -56,14 +56,90 @@ function constraintsSatisfied(
 	return true;
 }
 
+/**
+ * Compute the join key from a left token for a given future rightActivate bindingName.
+ * Returns null if the token lacks required bindings.
+ */
+function computeLeftKey(token: Token, bindingName: string, constraints: readonly JoinConstraint[]): string | null {
+	const parts: string[] = [];
+	for (const c of constraints) {
+		if (c.rightBinding === bindingName) {
+			const leftFact = token.factBindings[c.leftBinding];
+			if (!leftFact) return null;
+			parts.push(String(resolveField(leftFact, c.leftField)));
+		} else if (c.leftBinding === bindingName) {
+			const rFact = token.factBindings[c.rightBinding];
+			if (!rFact) return null;
+			parts.push(String(resolveField(rFact, c.rightField)));
+		}
+	}
+	return parts.length > 0 ? parts.join("\x00") : null;
+}
+
+/**
+ * Compute the join key from a right fact for lookup into the left index.
+ */
+function computeRightKey(fact: Fact, bindingName: string, constraints: readonly JoinConstraint[]): string | null {
+	const parts: string[] = [];
+	for (const c of constraints) {
+		if (c.rightBinding === bindingName) {
+			parts.push(String(resolveField(fact, c.rightField)));
+		} else if (c.leftBinding === bindingName) {
+			parts.push(String(resolveField(fact, c.leftField)));
+		}
+	}
+	return parts.length > 0 ? parts.join("\x00") : null;
+}
+
+/** Get distinct binding names referenced by constraints */
+function getIndexedBindingNames(constraints: readonly JoinConstraint[]): readonly string[] {
+	const names = new Set<string>();
+	for (const c of constraints) {
+		names.add(c.leftBinding);
+		names.add(c.rightBinding);
+	}
+	return [...names];
+}
+
 export function createJoinNode(config: JoinNodeConfig): JoinNode {
 	const { joinConstraints } = config;
 	const leftMemory: Token[] = [];
 	const rightMemory: Array<{ bindingName: string; fact: Fact }> = [];
 	const outputTokens: Token[] = [];
 
+	// Hash index: bindingName → (joinKey → Token[])
+	const hasConstraints = joinConstraints.length > 0;
+	const indexedBindings = hasConstraints ? getIndexedBindingNames(joinConstraints) : [];
+	const leftIndex = new Map<string, Map<string, Token[]>>();
+
+	function addToIndex(token: Token): void {
+		for (const bn of indexedBindings) {
+			const key = computeLeftKey(token, bn, joinConstraints);
+			if (key === null) continue;
+			let inner = leftIndex.get(bn);
+			if (!inner) {
+				inner = new Map();
+				leftIndex.set(bn, inner);
+			}
+			let bucket = inner.get(key);
+			if (!bucket) {
+				bucket = [];
+				inner.set(key, bucket);
+			}
+			bucket.push(token);
+		}
+	}
+
+	function rebuildIndex(): void {
+		leftIndex.clear();
+		for (const token of leftMemory) {
+			addToIndex(token);
+		}
+	}
+
 	const leftActivate = (token: Token): readonly Token[] => {
 		leftMemory.push(token);
+		if (hasConstraints) addToIndex(token);
 		const produced: Token[] = [];
 		for (const entry of rightMemory) {
 			if (constraintsSatisfied(joinConstraints, token.factBindings, entry.bindingName, entry.fact)) {
@@ -81,8 +157,28 @@ export function createJoinNode(config: JoinNodeConfig): JoinNode {
 	const rightActivate = (bindingName: string, fact: Fact): readonly Token[] => {
 		rightMemory.push({ bindingName, fact });
 		const produced: Token[] = [];
-		for (const token of leftMemory) {
-			if (constraintsSatisfied(joinConstraints, token.factBindings, bindingName, fact)) {
+
+		if (hasConstraints) {
+			// Use hash index for O(1) lookup
+			const key = computeRightKey(fact, bindingName, joinConstraints);
+			if (key === null) return produced;
+			const inner = leftIndex.get(bindingName);
+			if (!inner) return produced;
+			const candidates = inner.get(key);
+			if (!candidates) return produced;
+			for (const token of candidates) {
+				if (constraintsSatisfied(joinConstraints, token.factBindings, bindingName, fact)) {
+					const newToken: Token = {
+						id: generateTokenId(),
+						factBindings: { ...token.factBindings, [bindingName]: fact },
+					};
+					outputTokens.push(newToken);
+					produced.push(newToken);
+				}
+			}
+		} else {
+			// No constraints: cross-product (linear scan)
+			for (const token of leftMemory) {
 				const newToken: Token = {
 					id: generateTokenId(),
 					factBindings: { ...token.factBindings, [bindingName]: fact },
@@ -102,9 +198,15 @@ export function createJoinNode(config: JoinNodeConfig): JoinNode {
 			}
 		}
 		// Remove from left memory
+		let leftChanged = false;
 		for (let i = leftMemory.length - 1; i >= 0; i--) {
-			if (tokenContainsFact(leftMemory[i], factId)) leftMemory.splice(i, 1);
+			if (tokenContainsFact(leftMemory[i], factId)) {
+				leftMemory.splice(i, 1);
+				leftChanged = true;
+			}
 		}
+		// Rebuild index if left memory changed
+		if (leftChanged && hasConstraints) rebuildIndex();
 		// Remove from output tokens
 		const removed: Token[] = [];
 		for (let i = outputTokens.length - 1; i >= 0; i--) {
@@ -122,6 +224,7 @@ export function createJoinNode(config: JoinNodeConfig): JoinNode {
 		leftMemory.length = 0;
 		rightMemory.length = 0;
 		outputTokens.length = 0;
+		leftIndex.clear();
 	};
 
 	return { leftActivate, rightActivate, retractFact, getOutputTokens, clear };
