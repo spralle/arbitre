@@ -47,6 +47,8 @@ export function createBetaEvaluator(
 	const rules = new Map<string, RuleEntry>();
 	// Index: factType → rule entries that care about that type
 	const typeIndex = new Map<string, Set<string>>();
+	// Reverse index: factId → set of rule names with active tokens containing that fact
+	const factToRules = new Map<string, Set<string>>();
 
 	const registerRule = (ruleName: string, patterns: readonly FactPattern[]): void => {
 		const network = compile(patterns);
@@ -73,6 +75,10 @@ export function createBetaEvaluator(
 				if (set.size === 0) typeIndex.delete(p.$fact);
 			}
 		}
+		// Clean up factToRules reverse index
+		for (const [, ruleSet] of factToRules) {
+			ruleSet.delete(ruleName);
+		}
 		rules.delete(ruleName);
 	};
 
@@ -90,6 +96,17 @@ export function createBetaEvaluator(
 				if (pattern.$where && !matchesFilter(fact.data, pattern.$where)) continue;
 				const tokens = entry.network.activate(pattern.$bind, fact);
 				if (tokens.length > 0) {
+					// Track all facts in produced tokens for reverse index
+					for (const token of tokens) {
+						for (const boundFact of Object.values(token.factBindings)) {
+							let ruleSet = factToRules.get(boundFact.id);
+							if (!ruleSet) {
+								ruleSet = new Set();
+								factToRules.set(boundFact.id, ruleSet);
+							}
+							ruleSet.add(ruleName);
+						}
+					}
 					activations.push({ ruleName, tokens });
 				}
 			}
@@ -98,13 +115,29 @@ export function createBetaEvaluator(
 	};
 
 	const onFactRetracted = (factId: string): readonly FactDeactivation[] => {
+		const ruleNames = factToRules.get(factId);
+		if (!ruleNames || ruleNames.size === 0) {
+			// Fallback: scan all rules (handles edge cases where index may be incomplete)
+			const deactivations: FactDeactivation[] = [];
+			for (const [ruleName, entry] of rules) {
+				const removedTokens = entry.network.retract(factId);
+				if (removedTokens.length > 0) {
+					deactivations.push({ ruleName, removedTokens });
+				}
+			}
+			return deactivations;
+		}
+
 		const deactivations: FactDeactivation[] = [];
-		for (const [ruleName, entry] of rules) {
+		for (const ruleName of ruleNames) {
+			const entry = rules.get(ruleName);
+			if (!entry) continue;
 			const removedTokens = entry.network.retract(factId);
 			if (removedTokens.length > 0) {
 				deactivations.push({ ruleName, removedTokens });
 			}
 		}
+		factToRules.delete(factId);
 		return deactivations;
 	};
 

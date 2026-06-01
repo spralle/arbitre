@@ -38,11 +38,18 @@ export function createAgenda(): Agenda {
 	let activations: Activation[] = [];
 	let counter = 0;
 	const focusStack: string[] = [];
+	// O(1) existence check for deduplication
+	const activationNames = new Map<string, number>();
 
 	const addActivation = (rule: CompiledRule): void => {
-		const existing = activations.findIndex((a) => a.rule.name === rule.name);
-		if (existing !== -1) {
-			activations.splice(existing, 1);
+		const existingIdx = activationNames.get(rule.name);
+		if (existingIdx !== undefined) {
+			activations.splice(existingIdx, 1);
+			// Rebuild index for shifted elements
+			activationNames.clear();
+			for (let i = 0; i < activations.length; i++) {
+				activationNames.set(activations[i]!.rule.name, i);
+			}
 		}
 		const activation: Activation = {
 			rule,
@@ -61,10 +68,22 @@ export function createAgenda(): Agenda {
 			}
 		}
 		activations.splice(lo, 0, activation);
+		// Rebuild index after splice
+		activationNames.clear();
+		for (let i = 0; i < activations.length; i++) {
+			activationNames.set(activations[i]!.rule.name, i);
+		}
 	};
 
 	const removeActivation = (ruleName: string): void => {
+		if (!activationNames.has(ruleName)) return;
 		activations = activations.filter((a) => a.rule.name !== ruleName);
+		activationNames.delete(ruleName);
+		// Rebuild index
+		activationNames.clear();
+		for (let i = 0; i < activations.length; i++) {
+			activationNames.set(activations[i]!.rule.name, i);
+		}
 	};
 
 	const isEligible = (activation: Activation): boolean => {
@@ -77,6 +96,11 @@ export function createAgenda(): Agenda {
 		const idx = activations.findIndex(isEligible);
 		if (idx === -1) return undefined;
 		const [selected] = activations.splice(idx, 1);
+		// Rebuild index
+		activationNames.clear();
+		for (let i = 0; i < activations.length; i++) {
+			activationNames.set(activations[i]!.rule.name, i);
+		}
 		return selected.rule;
 	};
 
