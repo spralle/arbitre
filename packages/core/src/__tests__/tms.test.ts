@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import type { CompiledRule, TmsConfig, WriteRecord } from "../contracts.js";
+import type { CompiledRule, WriteRecord } from "../contracts.js";
 import type { ScopeManager } from "../scope.js";
 import { createTms } from "../tms.js";
 
@@ -56,32 +56,30 @@ describe("TMS", () => {
 	});
 
 	describe("shouldAutoRetract policy", () => {
-		const defaultConfig: TmsConfig = { autoRetract: "ui-contributions" };
-		const allConfig: TmsConfig = { autoRetract: "all" };
-
-		test("ui-contributions: $ui paths auto-retract", () => {
-			const tms = createTms(defaultConfig);
-			expect(tms.shouldAutoRetract("$ui.sidebar.visible", defaultConfig)).toBe(true);
+		test("all mode: all paths auto-retract", () => {
+			const tms = createTms({ autoRetract: "all" });
+			expect(tms.shouldAutoRetract("$ui.sidebar.visible")).toBe(true);
+			expect(tms.shouldAutoRetract("user.name")).toBe(true);
 		});
 
-		test("ui-contributions: $contributions paths auto-retract", () => {
-			const tms = createTms(defaultConfig);
-			expect(tms.shouldAutoRetract("$contributions.menu.items", defaultConfig)).toBe(true);
+		test("none mode: no paths auto-retract", () => {
+			const tms = createTms({ autoRetract: "none" });
+			expect(tms.shouldAutoRetract("$ui.sidebar.visible")).toBe(false);
+			expect(tms.shouldAutoRetract("user.name")).toBe(false);
 		});
 
-		test("ui-contributions: root paths do NOT auto-retract", () => {
-			const tms = createTms(defaultConfig);
-			expect(tms.shouldAutoRetract("user.name", defaultConfig)).toBe(false);
+		test("namespaces mode: only registered namespace paths auto-retract", () => {
+			const autoRetractNs = new Set(["$ui", "$contributions"]);
+			const tms = createTms({ autoRetract: "namespaces" }, autoRetractNs);
+			expect(tms.shouldAutoRetract("$ui.sidebar.visible")).toBe(true);
+			expect(tms.shouldAutoRetract("$contributions.menu.items")).toBe(true);
+			expect(tms.shouldAutoRetract("user.name")).toBe(false);
 		});
 
-		test("all: root paths auto-retract", () => {
-			const tms = createTms(allConfig);
-			expect(tms.shouldAutoRetract("user.name", allConfig)).toBe(true);
-		});
-
-		test("all: $ui paths auto-retract", () => {
-			const tms = createTms(allConfig);
-			expect(tms.shouldAutoRetract("$ui.theme", allConfig)).toBe(true);
+		test("default mode is all", () => {
+			const tms = createTms();
+			expect(tms.shouldAutoRetract("user.name")).toBe(true);
+			expect(tms.shouldAutoRetract("$ui.theme")).toBe(true);
 		});
 	});
 
@@ -153,7 +151,8 @@ describe("TMS", () => {
 		});
 
 		test("ruleDeactivated skips retraction when no writes in auto-retract namespaces", () => {
-			const tms = createTms({ autoRetract: "ui-contributions" });
+			const autoRetractNs = new Set(["$ui", "$contributions"]);
+			const tms = createTms({ autoRetract: "namespaces" }, autoRetractNs);
 			const rule = makeRule({ name: "root-only" });
 			tms.ruleActivated(rule);
 

@@ -96,6 +96,7 @@ describe("fire cycle", () => {
 	it("chains rules through dependency propagation", () => {
 		const session = createSession({
 			initialState: { price: 100, taxRate: 0.1 },
+			namespaces: [{ name: "$state" }],
 			rules: [
 				{
 					name: "calc-tax",
@@ -299,9 +300,9 @@ describe("disposed session", () => {
 // ---------------------------------------------------------------------------
 
 describe("else branch", () => {
-	it("executes else actions when condition is false", () => {
+	it("executes else actions when condition transitions true→false", () => {
 		const session = createSession({
-			initialState: { shipmentType: "standard" },
+			initialState: { shipmentType: "hazmat" },
 			rules: [
 				{
 					name: "hazmat-check",
@@ -311,7 +312,11 @@ describe("else branch", () => {
 				},
 			],
 		});
+		// Activate rule first
 		session.fire();
+		expect(session.getPath("$ui.hazmatForm.visible")).toBe(true);
+		// Deactivate: else should fire
+		session.update("shipmentType", "standard");
 		expect(session.getPath("$ui.hazmatForm.visible")).toBe(false);
 	});
 
@@ -333,7 +338,7 @@ describe("else branch", () => {
 
 	it("does not TMS-retract else writes (hasTms is false)", () => {
 		const session = createSession({
-			initialState: { shipmentType: "standard" },
+			initialState: { shipmentType: "hazmat" },
 			rules: [
 				{
 					name: "hazmat-check",
@@ -343,11 +348,15 @@ describe("else branch", () => {
 				},
 			],
 		});
+		// Activate first
 		session.fire();
+		expect(session.getPath("$ui.hazmatForm.visible")).toBe(true);
+
+		// Deactivate: else fires
+		session.update("shipmentType", "standard");
 		expect(session.getPath("$ui.hazmatForm.visible")).toBe(false);
 
-		// Change condition to true — else writes should NOT be auto-retracted
-		// because hasTms is false for rules with else branches
+		// Re-activate: then fires, else writes should NOT have been TMS-retracted
 		session.update("shipmentType", "hazmat");
 		expect(session.getPath("$ui.hazmatForm.visible")).toBe(true);
 	});

@@ -121,11 +121,11 @@ describe("Integration: All Three Epics Together", () => {
 		session.tick(1000);
 
 		// VIP spend = 5 * 150 = 750, not yet > 1000
-		expect(session.getPath("alerts.vipHighSpend")).toBe(false);
+		expect(session.getPath("alerts.vipHighSpend")).toBeUndefined();
 		// 5 orders in window — not yet rate limited (need > 5)
-		expect(session.getPath("alerts.rateLimited")).toBe(false);
+		expect(session.getPath("alerts.rateLimited")).toBeUndefined();
 		// Total order count is 5, not > 10
-		expect(session.getPath("loyalty.tier")).toBe("standard");
+		expect(session.getPath("loyalty.tier")).toBeUndefined();
 
 		// --- Phase 3: More orders push past thresholds ---
 		session.assertFact("Order", { amount: 150, customerId: "vip-1", status: "completed" });
@@ -134,7 +134,7 @@ describe("Integration: All Three Epics Together", () => {
 		// 6 orders in window → rate limited
 		expect(session.getPath("alerts.rateLimited")).toBe(true);
 		// VIP spend = 6 * 150 = 900, still not > 1000
-		expect(session.getPath("alerts.vipHighSpend")).toBe(false);
+		expect(session.getPath("alerts.vipHighSpend")).toBeUndefined();
 
 		// Two more orders push VIP spend over 1000
 		session.assertFact("Order", { amount: 150, customerId: "vip-1", status: "completed" });
@@ -204,9 +204,9 @@ describe("Integration: All Three Epics Together", () => {
 		session.assert("config.processingEnabled", true);
 		session.assert("orders.hasPending", true);
 
-		// Before business hours (t=0 = midnight) — rule fires else branch
+		// Before business hours (t=0 = midnight) — rule never active, else doesn't fire
 		session.tick(0);
-		expect(session.getPath("processing.active")).toBe(false);
+		expect(session.getPath("processing.active")).toBeUndefined();
 
 		// During business hours (t=36000000 = 10am) — all conditions met
 		session.tick(36_000_000);
@@ -261,8 +261,9 @@ describe("Integration: All Three Epics Together", () => {
 		for (let i = 0; i < 3; i++) {
 			ids.push(session.assertFact("Order", { amount: 10, customerId: "c1", status: "open" }));
 		}
-		expect(session.getPath("state.highVolume")).toBe(false);
-		expect(session.getPath("alerts.volumeAlert")).toBe("normal");
+		// Rule never active yet, so else hasn't fired — state is undefined
+		expect(session.getPath("state.highVolume")).toBeUndefined();
+		expect(session.getPath("alerts.volumeAlert")).toBeUndefined();
 
 		// 4th order crosses threshold → cascade fires
 		ids.push(session.assertFact("Order", { amount: 10, customerId: "c1", status: "open" }));

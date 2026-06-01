@@ -44,11 +44,11 @@ describe("reactive-aggregates", () => {
 			rules: [makeThresholdRule(9)],
 		});
 
-		// Assert 9 orders — threshold not crossed
+		// Assert 9 orders — threshold not crossed, rule never active → no else fired
 		for (let i = 0; i < 9; i++) {
 			session.assertFact("order", { amount: 10, status: "open" });
 		}
-		expect(session.getPath("alerts.thresholdCrossed")).toBe(false);
+		expect(session.getPath("alerts.thresholdCrossed")).toBeUndefined();
 
 		// 10th order crosses threshold
 		session.assertFact("order", { amount: 10, status: "open" });

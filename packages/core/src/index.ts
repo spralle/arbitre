@@ -21,6 +21,7 @@ export { createRealClock, createVirtualClock } from "./clock.js";
 export type {
 	ArbiterWarning,
 	FiringResult,
+	NamespaceConfig,
 	OperatorFunction,
 	OperatorRegistryConfig,
 	ProductionRule,

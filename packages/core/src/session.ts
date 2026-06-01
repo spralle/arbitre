@@ -36,10 +36,16 @@ import { createTms } from "./tms.js";
 // ---------------------------------------------------------------------------
 
 export function createSession<TState = Record<string, unknown>>(config?: SessionConfig<TState>): RuleSession<TState> {
-	const scope = createScopeManager(config?.initialState);
+	// Extract namespace names and build auto-retract set
+	const namespaceNames = config?.namespaces?.map((ns) => ns.name) ?? [];
+	const autoRetractNamespaces = new Set(
+		(config?.namespaces ?? []).filter((ns) => ns.autoRetract !== false).map((ns) => ns.name),
+	);
+
+	const scope = createScopeManager(config?.initialState, namespaceNames);
 	const network = createAlphaNetwork();
 	const agenda = createAgenda();
-	const tms = createTms(config?.tms);
+	const tms = createTms(config?.tms, autoRetractNamespaces);
 	const customOps = config?.clock ? { ...TEMPORAL_OPERATORS, ...config?.operators?.custom } : config?.operators?.custom;
 	const operators = createOperatorRegistry(customOps);
 
@@ -86,7 +92,9 @@ export function createSession<TState = Record<string, unknown>>(config?: Session
 	const subscriptions = new Map<string, Set<SubscriptionCallback>>();
 	const ruleConditionState = new Map<string, boolean>();
 	const pendingTokens = new Map<string, Token>();
+	const elseTracking = { wasActive: new Set<string>(), elseFired: new Set<string>() };
 	let disposed = false;
+	let firing = false;
 
 	const clock = config?.clock;
 	const timerQueue = clock ? createTimerQueue() : undefined;
@@ -135,6 +143,7 @@ export function createSession<TState = Record<string, unknown>>(config?: Session
 			limits,
 			ruleConditionState,
 			pendingTokens,
+			elseTracking,
 		};
 		if (config?.thenOperators) {
 			return { ...ctx, thenOperators: config.thenOperators };
@@ -202,25 +211,48 @@ export function createSession<TState = Record<string, unknown>>(config?: Session
 
 	function fire(): FiringResult {
 		assertNotDisposed();
-		injectClockTime();
-		const ctx = buildContext();
-		const result = fireCycle(ctx);
-		if (expiryTracker && clock) {
-			for (const ruleName of expiryMap.keys()) {
-				const isActive = ruleConditionState.get(ruleName) ?? false;
-				if (!isActive) {
-					expiryTracker.reset(ruleName);
-				}
-			}
-			for (const change of result.changes) {
-				if (expiryMap.has(change.ruleName)) {
-					expiryTracker.onRuleActivated(change.ruleName, clock.now());
-				}
-			}
+		if (firing) {
+			throw new ArbiterError(
+				ArbiterErrorCode.REENTRANT_FIRE,
+				"Cannot call fire() or update() while a fire cycle is in progress (e.g., from a subscribe callback)",
+			);
 		}
-		trackPatternRuleProvenance(result);
-		notifySubscribers(result.changes);
-		return result;
+		firing = true;
+		try {
+			injectClockTime();
+			const ctx = buildContext();
+			const stateSnapshot = scope.snapshot();
+			let result: FiringResult;
+			try {
+				result = fireCycle(ctx);
+			} catch (e) {
+				if (
+					e instanceof ArbiterError &&
+					(e.code === ArbiterErrorCode.CYCLE_LIMIT_EXCEEDED || e.code === ArbiterErrorCode.FIRING_LIMIT_EXCEEDED)
+				) {
+					scope.restore(stateSnapshot);
+				}
+				throw e;
+			}
+			if (expiryTracker && clock) {
+				for (const ruleName of expiryMap.keys()) {
+					const isActive = ruleConditionState.get(ruleName) ?? false;
+					if (!isActive) {
+						expiryTracker.reset(ruleName);
+					}
+				}
+				for (const change of result.changes) {
+					if (expiryMap.has(change.ruleName)) {
+						expiryTracker.onRuleActivated(change.ruleName, clock.now());
+					}
+				}
+			}
+			trackPatternRuleProvenance(result);
+			notifySubscribers(result.changes);
+			return result;
+		} finally {
+			firing = false;
+		}
 	}
 
 	function trackPatternRuleProvenance(result: FiringResult): void {

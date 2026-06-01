@@ -5,6 +5,11 @@ import type { ScopeManager } from "./scope.js";
 // Truth Maintenance System (ADR §5)
 // Auto-retracts rule writes when conditions flip true→false.
 // Extended: tracks fact-dependent derivations for join retraction.
+//
+// TMS modes:
+// - "all" (default): auto-retracts ALL paths written by a rule when its condition becomes false
+// - "namespaces": only auto-retracts writes to namespaces with autoRetract: true
+// - "none": never auto-retract (user handles manually via else or external logic)
 // ---------------------------------------------------------------------------
 
 /** Provenance record linking a rule's writes to contributing fact IDs */
@@ -17,7 +22,7 @@ export interface TruthMaintenanceSystem {
 	readonly ruleActivated: (rule: CompiledRule) => void;
 	readonly ruleDeactivated: (rule: CompiledRule, scope: ScopeManager) => readonly string[];
 	readonly shouldTrack: (rule: CompiledRule) => boolean;
-	readonly shouldAutoRetract: (path: string, config: TmsConfig) => boolean;
+	readonly shouldAutoRetract: (path: string) => boolean;
 	readonly getActiveRules: () => ReadonlySet<string>;
 	readonly removeRule: (ruleName: string) => void;
 	/** Register that a rule fired due to specific fact IDs */
@@ -28,33 +33,27 @@ export interface TruthMaintenanceSystem {
 	readonly getProvenance: (ruleName: string) => readonly TmsProvenance[];
 }
 
-const AUTO_RETRACT_PREFIXES: readonly string[] = ["$ui.", "$contributions."];
-const AUTO_RETRACT_BARE: ReadonlySet<string> = new Set(["$ui", "$contributions"]);
-
-function isAutoRetractNamespace(path: string): boolean {
-	if (AUTO_RETRACT_BARE.has(path)) return true;
-	for (const prefix of AUTO_RETRACT_PREFIXES) {
-		if (path.startsWith(prefix)) return true;
-	}
-	return false;
-}
-
-export function createTms(config?: TmsConfig): TruthMaintenanceSystem {
+export function createTms(config?: TmsConfig, autoRetractNamespaces?: ReadonlySet<string>): TruthMaintenanceSystem {
 	const activeRules = new Set<string>();
-	const resolvedConfig: TmsConfig = { autoRetract: config?.autoRetract ?? "ui-contributions" };
+	const mode = config?.autoRetract ?? "all";
 	// Fact dependency tracking: ruleName → factIds that contributed to its firing
 	const factDependencies = new Map<string, Set<string>>();
 	// Reverse index: factId → ruleNames that depend on it
 	const factToRules = new Map<string, Set<string>>();
 
-	function shouldTrack(rule: CompiledRule): boolean {
-		return rule.hasTms !== false;
+	function shouldAutoRetract(path: string): boolean {
+		if (mode === "all") return true;
+		if (mode === "none") return false;
+		// mode === "namespaces" — check if path is in an auto-retract namespace
+		if (!autoRetractNamespaces) return false;
+		for (const ns of autoRetractNamespaces) {
+			if (path === ns || path.startsWith(`${ns}.`)) return true;
+		}
+		return false;
 	}
 
-	function shouldAutoRetract(path: string, cfg: TmsConfig): boolean {
-		const mode = cfg.autoRetract ?? "ui-contributions";
-		if (mode === "all") return true;
-		return isAutoRetractNamespace(path);
+	function shouldTrack(rule: CompiledRule): boolean {
+		return rule.hasTms !== false;
 	}
 
 	function ruleActivated(rule: CompiledRule): void {
@@ -69,7 +68,7 @@ export function createTms(config?: TmsConfig): TruthMaintenanceSystem {
 		activeRules.delete(rule.name);
 
 		const writes = scope.getWriteRecords(rule.name);
-		const hasRetractable = writes.some((w) => shouldAutoRetract(w.path, resolvedConfig));
+		const hasRetractable = writes.some((w) => shouldAutoRetract(w.path));
 		if (!hasRetractable) return [];
 
 		return scope.revertRule(rule.name);

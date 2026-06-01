@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import { createScopeManager } from "../scope.js";
 
 describe("ScopeManager", () => {
+	const defaultNamespaces = ["$ui", "$state", "$contributions"];
+
 	describe("resolveNamespace", () => {
 		it("routes plain path to root", () => {
-			const scope = createScopeManager();
+			const scope = createScopeManager(undefined, defaultNamespaces);
 			expect(scope.resolveNamespace("firstName")).toEqual({
 				namespace: "root",
 				localPath: "firstName",
@@ -12,7 +14,7 @@ describe("ScopeManager", () => {
 		});
 
 		it("routes dotted path to root", () => {
-			const scope = createScopeManager();
+			const scope = createScopeManager(undefined, defaultNamespaces);
 			expect(scope.resolveNamespace("address.city")).toEqual({
 				namespace: "root",
 				localPath: "address.city",
@@ -20,7 +22,7 @@ describe("ScopeManager", () => {
 		});
 
 		it("routes $ui prefixed path", () => {
-			const scope = createScopeManager();
+			const scope = createScopeManager(undefined, defaultNamespaces);
 			expect(scope.resolveNamespace("$ui.firstName.visible")).toEqual({
 				namespace: "$ui",
 				localPath: "firstName.visible",
@@ -28,7 +30,7 @@ describe("ScopeManager", () => {
 		});
 
 		it("routes $state prefixed path", () => {
-			const scope = createScopeManager();
+			const scope = createScopeManager(undefined, defaultNamespaces);
 			expect(scope.resolveNamespace("$state.total")).toEqual({
 				namespace: "$state",
 				localPath: "total",
@@ -36,7 +38,7 @@ describe("ScopeManager", () => {
 		});
 
 		it("routes $meta prefixed path", () => {
-			const scope = createScopeManager();
+			const scope = createScopeManager(undefined, defaultNamespaces);
 			expect(scope.resolveNamespace("$meta.lastFired")).toEqual({
 				namespace: "$meta",
 				localPath: "lastFired",
@@ -44,7 +46,7 @@ describe("ScopeManager", () => {
 		});
 
 		it("routes $contributions prefixed path", () => {
-			const scope = createScopeManager();
+			const scope = createScopeManager(undefined, defaultNamespaces);
 			expect(scope.resolveNamespace("$contributions.copy.visible")).toEqual({
 				namespace: "$contributions",
 				localPath: "copy.visible",
@@ -52,7 +54,7 @@ describe("ScopeManager", () => {
 		});
 
 		it("routes bare $ui to namespace with empty localPath", () => {
-			const scope = createScopeManager();
+			const scope = createScopeManager(undefined, defaultNamespaces);
 			expect(scope.resolveNamespace("$ui")).toEqual({
 				namespace: "$ui",
 				localPath: "",
@@ -74,7 +76,7 @@ describe("ScopeManager", () => {
 		});
 
 		it("set writes to $ui namespace", () => {
-			const scope = createScopeManager();
+			const scope = createScopeManager(undefined, defaultNamespaces);
 			scope.set("$ui.name.visible", true, "r1");
 			expect(scope.get("$ui.name.visible")).toBe(true);
 		});
@@ -214,7 +216,7 @@ describe("ScopeManager", () => {
 
 	describe("getState", () => {
 		it("returns merged view of all namespaces", () => {
-			const scope = createScopeManager({ name: "Alice" });
+			const scope = createScopeManager({ name: "Alice" }, defaultNamespaces);
 			scope.set("$ui.name.visible", true, "r1");
 			const state = scope.getState();
 			expect(state["name"]).toBe("Alice");
@@ -232,7 +234,7 @@ describe("ScopeManager", () => {
 
 	describe("getReadView", () => {
 		it("returns same data as getState", () => {
-			const scope = createScopeManager({ x: 1, nested: { a: 2 } });
+			const scope = createScopeManager({ x: 1, nested: { a: 2 } }, defaultNamespaces);
 			scope.set("$ui.visible", true, "test");
 
 			const view = scope.getReadView();

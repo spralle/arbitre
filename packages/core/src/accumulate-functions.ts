@@ -18,12 +18,20 @@ export const accumulateCount: AccumulateFn = (values) => values.length;
 
 export const accumulateMin: AccumulateFn = (values) => {
 	if (values.length === 0) return null;
-	return Math.min(...values);
+	let min = values[0]!;
+	for (let i = 1; i < values.length; i++) {
+		if (values[i]! < min) min = values[i]!;
+	}
+	return min;
 };
 
 export const accumulateMax: AccumulateFn = (values) => {
 	if (values.length === 0) return null;
-	return Math.max(...values);
+	let max = values[0]!;
+	for (let i = 1; i < values.length; i++) {
+		if (values[i]! > max) max = values[i]!;
+	}
+	return max;
 };
 
 export const accumulateAvg: AccumulateFn = (values) => {

@@ -12,6 +12,7 @@ export const ArbiterErrorCode = {
 	EXPRESSION_EVAL_FAILED: "ARBITER_EXPRESSION_EVAL_FAILED",
 	RULE_NOT_FOUND: "ARBITER_RULE_NOT_FOUND",
 	INVALID_CLOCK_OPERATION: "ARBITER_INVALID_CLOCK_OPERATION",
+	REENTRANT_FIRE: "ARBITER_REENTRANT_FIRE",
 } as const;
 
 export type ArbiterErrorCode = (typeof ArbiterErrorCode)[keyof typeof ArbiterErrorCode];

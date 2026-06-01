@@ -18,7 +18,8 @@ function isCrossTypeConfig(config: AccumulateConfig): config is AccumulateConfig
 	return config.binding !== undefined && config.rule !== undefined;
 }
 
-function extractTokenValue(token: Token, binding: string, field: string): number | undefined {
+function extractTokenValue(token: Token, binding: string, field: string, fn: string): number | undefined {
+	if (fn === "$count") return 1;
 	const fact = token.factBindings[binding];
 	if (!fact) return undefined;
 	const raw = fact.data[field];
@@ -44,7 +45,7 @@ export function createCrossTypeAccumulator(
 	function onTokenCreated(ruleName: string, token: Token): void {
 		for (const cfg of crossConfigs) {
 			if (cfg.rule !== ruleName) continue;
-			const value = extractTokenValue(token, cfg.binding, cfg.field);
+			const value = extractTokenValue(token, cfg.binding, cfg.field, cfg.fn);
 			if (value === undefined) continue;
 			const map = tokenMaps.get(cfg.alias)!;
 			map.set(token.id, value);

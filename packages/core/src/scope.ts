@@ -8,16 +8,7 @@ import { isRecord } from "./type-guards.js";
 // Namespace types and routing
 // ---------------------------------------------------------------------------
 
-export type Namespace = "root" | "$ui" | "$state" | "$meta" | "$contributions";
-
-export const NAMESPACE_PREFIXES: readonly { readonly prefix: string; readonly namespace: Namespace }[] = [
-	{ prefix: "$contributions.", namespace: "$contributions" },
-	{ prefix: "$state.", namespace: "$state" },
-	{ prefix: "$meta.", namespace: "$meta" },
-	{ prefix: "$ui.", namespace: "$ui" },
-];
-
-const BARE_NAMESPACES: ReadonlySet<string> = new Set(["$ui", "$state", "$meta", "$contributions"]);
+export type Namespace = "root" | "$meta" | string;
 
 export interface ScopeManager {
 	readonly get: (path: string) => unknown;
@@ -32,24 +23,22 @@ export interface ScopeManager {
 	readonly getState: () => Readonly<Record<string, unknown>>;
 	readonly getReadView: () => Readonly<Record<string, unknown>>;
 	readonly snapshot: () => unknown;
-	readonly resolveNamespace: (path: string) => { namespace: Namespace; localPath: string };
+	readonly restore: (snapshot: unknown) => void;
+	readonly resolveNamespace: (path: string) => { namespace: string; localPath: string };
+	readonly getRegisteredNamespaces: () => ReadonlySet<string>;
+}
+
+/** Check if a path belongs to any of the registered namespaces. */
+export function isNamespacePath(path: string, namespaces: ReadonlySet<string>): boolean {
+	for (const ns of namespaces) {
+		if (path === ns || path.startsWith(`${ns}.`)) return true;
+	}
+	return false;
 }
 
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
-
-function resolveNamespace(path: string): { namespace: Namespace; localPath: string } {
-	for (const { prefix, namespace } of NAMESPACE_PREFIXES) {
-		if (path.startsWith(prefix)) {
-			return { namespace, localPath: path.slice(prefix.length) };
-		}
-	}
-	if (BARE_NAMESPACES.has(path)) {
-		return { namespace: path as Namespace, localPath: "" };
-	}
-	return { namespace: "root", localPath: path };
-}
 
 function deepGet(obj: Record<string, unknown>, segments: readonly string[]): unknown {
 	return collectPath(obj, segments);
@@ -97,17 +86,36 @@ function safeClone(value: unknown): unknown {
 // Factory
 // ---------------------------------------------------------------------------
 
-export function createScopeManager(initialState?: Readonly<Record<string, unknown>>): ScopeManager {
-	const stores: Record<Namespace, Record<string, unknown>> = {
+export function createScopeManager(
+	initialState?: Readonly<Record<string, unknown>>,
+	namespaces?: readonly string[],
+): ScopeManager {
+	// Always include $meta as built-in
+	const registeredNamespaces = new Set(["$meta", ...(namespaces ?? [])]);
+
+	// Build stores dynamically
+	const stores: Record<string, Record<string, unknown>> = {
 		root: initialState ? (structuredClone(initialState) as Record<string, unknown>) : {},
-		$ui: {},
-		$state: {},
-		$meta: {},
-		$contributions: {},
 	};
+	for (const ns of registeredNamespaces) {
+		stores[ns] = {};
+	}
 
 	const provenanceMap = new Map<string, WriteRecord[]>();
 	const snapshots = new Map<string, unknown>();
+	let cachedReadView: Record<string, unknown> | null = null;
+
+	function resolveNamespace(path: string): { namespace: string; localPath: string } {
+		for (const ns of registeredNamespaces) {
+			if (path.startsWith(`${ns}.`)) {
+				return { namespace: ns, localPath: path.slice(ns.length + 1) };
+			}
+			if (path === ns) {
+				return { namespace: ns, localPath: "" };
+			}
+		}
+		return { namespace: "root", localPath: path };
+	}
 
 	function clearSnapshotsForRule(ruleName: string): void {
 		for (const key of [...snapshots.keys()]) {
@@ -117,8 +125,8 @@ export function createScopeManager(initialState?: Readonly<Record<string, unknow
 		}
 	}
 
-	function getStore(ns: Namespace): Record<string, unknown> {
-		return stores[ns];
+	function getStore(ns: string): Record<string, unknown> {
+		return stores[ns]!;
 	}
 
 	function readPath(path: string): unknown {
@@ -157,6 +165,7 @@ export function createScopeManager(initialState?: Readonly<Record<string, unknow
 		const segments = splitPath(localPath);
 		const prev = deepGet(getStore(namespace), segments);
 		deepSet(getStore(namespace), segments, value);
+		cachedReadView = null;
 		return recordWrite(path, value, prev, ruleName);
 	}
 
@@ -167,6 +176,7 @@ export function createScopeManager(initialState?: Readonly<Record<string, unknow
 		const segments = splitPath(localPath);
 		const prev = deepGet(getStore(namespace), segments);
 		deepDelete(getStore(namespace), segments);
+		cachedReadView = null;
 		return recordWrite(path, undefined, prev, ruleName);
 	}
 
@@ -180,6 +190,7 @@ export function createScopeManager(initialState?: Readonly<Record<string, unknow
 		const arr = Array.isArray(current) ? [...current, value] : [value];
 		const prev = current;
 		deepSet(store, segments, arr);
+		cachedReadView = null;
 		return recordWrite(path, arr, prev, ruleName);
 	}
 
@@ -200,6 +211,7 @@ export function createScopeManager(initialState?: Readonly<Record<string, unknow
 		const base = typeof current === "number" ? current : 0;
 		const newVal = base + amount;
 		deepSet(store, segments, newVal);
+		cachedReadView = null;
 		return recordWrite(path, newVal, prev, ruleName);
 	}
 
@@ -217,6 +229,7 @@ export function createScopeManager(initialState?: Readonly<Record<string, unknow
 		const base = isRecord(current) ? current : {};
 		const merged = { ...base, ...value };
 		deepSet(store, segments, merged);
+		cachedReadView = null;
 		return recordWrite(path, merged, prev, ruleName);
 	}
 
@@ -241,6 +254,7 @@ export function createScopeManager(initialState?: Readonly<Record<string, unknow
 		}
 		provenanceMap.delete(ruleName);
 		clearSnapshotsForRule(ruleName);
+		cachedReadView = null;
 		return paths;
 	}
 
@@ -251,9 +265,9 @@ export function createScopeManager(initialState?: Readonly<Record<string, unknow
 
 	function getState(): Readonly<Record<string, unknown>> {
 		const result: Record<string, unknown> = { ...structuredClone(stores.root) };
-		for (const ns of ["$ui", "$state", "$meta", "$contributions"] as const) {
-			if (Object.keys(stores[ns]).length > 0) {
-				result[ns] = structuredClone(stores[ns]);
+		for (const ns of registeredNamespaces) {
+			if (Object.keys(stores[ns]!).length > 0) {
+				result[ns] = structuredClone(stores[ns]!);
 			}
 		}
 		return result;
@@ -263,13 +277,32 @@ export function createScopeManager(initialState?: Readonly<Record<string, unknow
 		return structuredClone(stores);
 	}
 
+	function restoreState(snapshot: unknown): void {
+		const snapped = snapshot as Record<string, Record<string, unknown>>;
+		const allKeys = new Set(["root", ...registeredNamespaces]);
+		for (const ns of allKeys) {
+			const data = snapped[ns];
+			// Clear and repopulate
+			for (const key of Object.keys(stores[ns]!)) {
+				delete stores[ns]![key];
+			}
+			Object.assign(stores[ns]!, data);
+		}
+		provenanceMap.clear();
+		snapshots.clear();
+		cachedReadView = null;
+	}
+
 	function getReadView(): Readonly<Record<string, unknown>> {
+		if (cachedReadView) return cachedReadView;
 		const result: Record<string, unknown> = { ...stores.root };
-		for (const ns of ["$ui", "$state", "$meta", "$contributions"] as const) {
-			if (Object.keys(stores[ns]).length > 0) {
-				result[ns] = stores[ns];
+		for (const ns of registeredNamespaces) {
+			const store = stores[ns]!;
+			if (Object.keys(store).length > 0) {
+				result[ns] = store;
 			}
 		}
+		cachedReadView = result;
 		return result;
 	}
 
@@ -286,6 +319,8 @@ export function createScopeManager(initialState?: Readonly<Record<string, unknow
 		getState,
 		getReadView,
 		snapshot: snapshotState,
+		restore: restoreState,
 		resolveNamespace,
+		getRegisteredNamespaces: () => registeredNamespaces,
 	};
 }

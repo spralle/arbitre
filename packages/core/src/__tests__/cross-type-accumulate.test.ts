@@ -117,7 +117,8 @@ describe("cross-type-accumulate", () => {
 
 		session.assertFact("customer", { name: "Alice", vip: true, custId: "alice-1" });
 		session.assertFact("order", { amount: 50, customerId: "alice-1" });
-		expect(session.getPath("alerts.vipHighSpend")).toBe(false);
+		// Below threshold: rule has never been active, so no then/else fired
+		expect(session.getPath("alerts.vipHighSpend")).toBeUndefined();
 
 		session.assertFact("order", { amount: 60, customerId: "alice-1" });
 		expect(session.getPath("alerts.vipHighSpend")).toBe(true);
