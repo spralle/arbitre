@@ -4,6 +4,9 @@ import type { AccumulateConfig } from "./accumulate-node.js";
 import type { ArbiterClock } from "./clock.js";
 import type { Fact } from "./fact-memory.js";
 import type { CompiledPattern, FactPattern } from "./fact-pattern.js";
+import type { SessionHooks } from "./hooks.js";
+import type { SessionIntrospection } from "./introspection.js";
+import type { ArbiterLogger } from "./logger.js";
 
 export type { CompiledPattern } from "./fact-pattern.js";
 
@@ -108,6 +111,8 @@ export interface SessionConfig<TState = Record<string, unknown>> {
 	readonly autoFireOnFactChange?: boolean | undefined;
 	/** User-defined namespaces. $meta is always available as a built-in. */
 	readonly namespaces?: readonly NamespaceConfig[] | undefined;
+	readonly hooks?: SessionHooks | undefined;
+	readonly logger?: ArbiterLogger | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -168,6 +173,8 @@ export interface RuleSession<TState = Record<string, unknown>> {
 
 	readonly scheduleRule: (ruleName: string, options: ScheduleOptions) => void;
 	readonly cancelSchedule: (ruleName: string) => void;
+
+	readonly introspect: SessionIntrospection;
 }
 
 // ---------------------------------------------------------------------------

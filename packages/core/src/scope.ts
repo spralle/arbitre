@@ -78,7 +78,9 @@ function snapshotKey(ruleName: string, path: string): string {
 }
 
 function safeClone(value: unknown): unknown {
-	if (value === undefined) return undefined;
+	if (value === undefined || value === null) return value;
+	if (typeof value !== "object") return value;
+	if (Array.isArray(value)) return [...value];
 	return structuredClone(value);
 }
 
@@ -273,13 +275,13 @@ export function createScopeManager(
 	}
 
 	function getState(): Readonly<Record<string, unknown>> {
-		const result: Record<string, unknown> = { ...structuredClone(stores.root) };
+		const result: Record<string, unknown> = { ...stores.root };
 		for (const ns of registeredNamespaces) {
 			if (Object.keys(stores[ns]!).length > 0) {
-				result[ns] = structuredClone(stores[ns]!);
+				result[ns] = stores[ns]!;
 			}
 		}
-		return result;
+		return Object.freeze(result);
 	}
 
 	function snapshotState(): unknown {
