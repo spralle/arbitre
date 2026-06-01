@@ -4,6 +4,23 @@
 	"type": "module",
 	"description": "Rete-inspired production rule engine for declarative state governance",
 	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/spralle/arbitre.git",
+		"directory": "packages/core"
+	},
+	"keywords": [
+		"rule-engine",
+		"rete",
+		"production-rules",
+		"tms",
+		"truth-maintenance",
+		"mongodb-query",
+		"state-management",
+		"declarative",
+		"temporal",
+		"accumulate"
+	],
 	"main": "./dist/index.cjs",
 	"module": "./dist/index.js",
 	"types": "./dist/index.d.ts",

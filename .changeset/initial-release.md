@@ -2,18 +2,26 @@
 "@arbitre/core": minor
 ---
 
-Initial 0.1.0 release of @arbitre/core — Rete-inspired production rule engine.
+Initial release of @arbitre/core — Rete-inspired production rule engine.
 
 Features:
-- Production rule compilation with MongoDB-style conditions (via kuery)
+- RETE alpha + beta network with multi-fact join matching
 - Match-resolve-act fire cycle with propagation
-- Alpha network for efficient change routing
-- Salience-based agenda with focus groups
-- Truth Maintenance System (auto-retract on condition flip)
+- MongoDB-style conditions (via kuery) and pipeline-style actions
+- Salience-based agenda with activation groups and focus stack
+- Truth Maintenance System with fact-level provenance tracking
 - Namespaced state management ($ui, $state, $meta, $contributions)
-- MongoDB update pipeline actions ($set, $unset, $inc, $push, $pull, $merge)
+- MongoDB update operators ($set, $unset, $inc, $push, $pull, $merge)
 - Expression operators ($sum, $multiply, $cond, $coalesce, etc.)
-- Rule validation with security checks (prototype pollution protection)
-- L2 multi-fact support with accumulate nodes
+- Temporal operators ($elapsed, $within, $after, $before) with clock abstraction
+- Timer queue for scheduled rule activation/deactivation
+- Rule expiry with auto-deactivation
+- Accumulate nodes (sum, count, min, max, avg, collect)
+- Windowed accumulation (time-based sliding window)
+- Cross-type accumulation (join-scoped aggregation)
+- Custom accumulate functions (user-defined aggregation)
+- Fact type registration and working memory CRUD
+- Pattern validation with compile-time error messages
+- Security: prototype pollution prevention, recursion limits
 - Testing utilities (createTestSession, fireWith, assertRuleFired)
 - Debug utilities (explainResult, formatChanges, dumpState)
