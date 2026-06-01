@@ -41,7 +41,7 @@ describe("rule expiry", () => {
 			rules: [makeRule({ then: [{ $set: { "$ui.banner": "hello" } }] })],
 			initialState: { flags: { active: true } },
 			clock,
-			tms: { autoRetract: "ui-contributions" },
+			tms: { autoRetract: "all" },
 		});
 
 		session.assert("$ui.banner", "");
@@ -58,7 +58,7 @@ describe("rule expiry", () => {
 			rules: [makeRule({ then: [{ $set: { "$ui.show": true } }] })],
 			initialState: { flags: { active: true } },
 			clock,
-			tms: { autoRetract: "ui-contributions" },
+			tms: { autoRetract: "all" },
 		});
 
 		session.assert("$ui.show", false);
@@ -99,7 +99,7 @@ describe("rule expiry", () => {
 			],
 			initialState: { flags: { on: true }, $ui: { label: "" } },
 			clock,
-			tms: { autoRetract: "ui-contributions" },
+			tms: { autoRetract: "all" },
 		});
 
 		session.tick(0);
@@ -119,7 +119,7 @@ describe("rule expiry", () => {
 			],
 			initialState: { flags: { active: true } },
 			clock,
-			tms: { autoRetract: "ui-contributions" },
+			tms: { autoRetract: "all" },
 		});
 
 		session.assert("$ui.fast", false);

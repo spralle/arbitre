@@ -75,8 +75,22 @@ export interface SessionLimits {
 	readonly warnAtFirings?: number | undefined;
 }
 
+/** Configuration for a user-defined namespace */
+export interface NamespaceConfig {
+	/** The namespace prefix (must start with $, e.g., "$ui") */
+	readonly name: string;
+	/** Whether TMS auto-retracts writes in this namespace (default: true — inherits from TMS mode) */
+	readonly autoRetract?: boolean;
+}
+
+/** TMS auto-retract configuration */
 export interface TmsConfig {
-	readonly autoRetract?: "ui-contributions" | "all" | undefined;
+	/**
+	 * - "all" (default): auto-retract ALL writes when rule deactivates
+	 * - "namespaces": only auto-retract writes to namespaces with autoRetract: true
+	 * - "none": never auto-retract (user handles manually via else or external logic)
+	 */
+	readonly autoRetract?: "all" | "namespaces" | "none" | undefined;
 }
 
 export interface SessionConfig<TState = Record<string, unknown>> {
@@ -92,6 +106,8 @@ export interface SessionConfig<TState = Record<string, unknown>> {
 	readonly accumulateFunctions?: Readonly<Record<string, CustomAccumulateFunction>> | undefined;
 	readonly clock?: ArbiterClock | undefined;
 	readonly autoFireOnFactChange?: boolean | undefined;
+	/** User-defined namespaces. $meta is always available as a built-in. */
+	readonly namespaces?: readonly NamespaceConfig[] | undefined;
 }
 
 // ---------------------------------------------------------------------------

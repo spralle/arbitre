@@ -5,18 +5,15 @@ import type { CompiledStage, OperatorFunction, StateChange, ThenOperatorRegistry
 import { ArbiterError, ArbiterErrorCode } from "./errors.js";
 import { isExpression } from "./path-utils.js";
 import type { ScopeManager } from "./scope.js";
-import { NAMESPACE_PREFIXES } from "./scope.js";
+import { isNamespacePath } from "./scope.js";
 import { isRecord } from "./type-guards.js";
 
 // ---------------------------------------------------------------------------
 // Expression value resolution
 // ---------------------------------------------------------------------------
 
-function isNamespacedRef(ref: string): boolean {
-	for (const { prefix, namespace } of NAMESPACE_PREFIXES) {
-		if (ref === namespace || ref.startsWith(prefix)) return true;
-	}
-	return false;
+function isNamespacedRef(ref: string, namespaces: ReadonlySet<string>): boolean {
+	return isNamespacePath(ref, namespaces);
 }
 
 export function resolveValue(
@@ -26,7 +23,7 @@ export function resolveValue(
 ): unknown {
 	if (typeof value === "string" && value.startsWith("$")) {
 		const ref = value.slice(1);
-		const path = isNamespacedRef(`$${ref}`) ? `$${ref}` : ref;
+		const path = isNamespacedRef(`$${ref}`, scope.getRegisteredNamespaces()) ? `$${ref}` : ref;
 		return scope.get(path);
 	}
 	if (isExpression(value) && isRecord(value)) {

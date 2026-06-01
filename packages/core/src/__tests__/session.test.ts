@@ -96,6 +96,7 @@ describe("fire cycle", () => {
 	it("chains rules through dependency propagation", () => {
 		const session = createSession({
 			initialState: { price: 100, taxRate: 0.1 },
+			namespaces: [{ name: "$state" }],
 			rules: [
 				{
 					name: "calc-tax",

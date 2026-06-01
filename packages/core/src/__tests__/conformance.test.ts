@@ -78,6 +78,7 @@ describe("Conformance: B2B logistics scenarios", () => {
 				unitPrice: 25,
 				taxRate: 0.08,
 			},
+			namespaces: [{ name: "$state" }],
 			rules: [
 				{
 					name: "calc-subtotal",

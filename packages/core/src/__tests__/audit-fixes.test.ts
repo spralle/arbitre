@@ -255,10 +255,10 @@ describe("Fix 9: TMS all mode retracts root namespace paths", () => {
 		expect(session.getPath("result.value")).toBeUndefined();
 	});
 
-	it("does NOT auto-retract root namespace writes when mode is 'ui-contributions'", () => {
+	it("does NOT auto-retract root namespace writes when mode is 'none'", () => {
 		const session = createSession({
 			initialState: { active: true },
-			tms: { autoRetract: "ui-contributions" },
+			tms: { autoRetract: "none" },
 			rules: [
 				{
 					name: "set-root",
@@ -273,7 +273,7 @@ describe("Fix 9: TMS all mode retracts root namespace paths", () => {
 
 		session.assert("active", false);
 		session.fire();
-		// Root writes should NOT be retracted in ui-contributions mode
+		// Root writes should NOT be retracted in none mode
 		expect(session.getPath("result.value")).toBe(42);
 	});
 });

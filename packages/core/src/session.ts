@@ -36,10 +36,16 @@ import { createTms } from "./tms.js";
 // ---------------------------------------------------------------------------
 
 export function createSession<TState = Record<string, unknown>>(config?: SessionConfig<TState>): RuleSession<TState> {
-	const scope = createScopeManager(config?.initialState);
+	// Extract namespace names and build auto-retract set
+	const namespaceNames = config?.namespaces?.map((ns) => ns.name) ?? [];
+	const autoRetractNamespaces = new Set(
+		(config?.namespaces ?? []).filter((ns) => ns.autoRetract !== false).map((ns) => ns.name),
+	);
+
+	const scope = createScopeManager(config?.initialState, namespaceNames);
 	const network = createAlphaNetwork();
 	const agenda = createAgenda();
-	const tms = createTms(config?.tms);
+	const tms = createTms(config?.tms, autoRetractNamespaces);
 	const customOps = config?.clock ? { ...TEMPORAL_OPERATORS, ...config?.operators?.custom } : config?.operators?.custom;
 	const operators = createOperatorRegistry(customOps);
 
