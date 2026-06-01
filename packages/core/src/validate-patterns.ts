@@ -79,19 +79,45 @@ function validateSinglePattern(
 		}
 
 		for (const [field, ref] of Object.entries(pattern.$join)) {
-			if (typeof ref !== "string" || !ref.startsWith("$")) {
+			if (typeof ref === "string") {
+				if (!ref.startsWith("$")) {
+					throw new ArbiterError(
+						ArbiterErrorCode.RULE_COMPILATION_FAILED,
+						`Rule "${ruleName}" pattern[${index}] $join["${field}"] must be a "$binding.path" reference`,
+						{ ruleName },
+					);
+				}
+				const bindingName = ref.slice(1).split(".")[0];
+				if (!previousBindings.has(bindingName)) {
+					throw new ArbiterError(
+						ArbiterErrorCode.RULE_COMPILATION_FAILED,
+						`Rule "${ruleName}" pattern[${index}] $join references unknown binding "${bindingName}"`,
+						{ ruleName },
+					);
+				}
+			} else if (typeof ref === "object" && ref !== null) {
+				// Predicate object: validate each operator value
+				for (const [op, val] of Object.entries(ref as Record<string, unknown>)) {
+					if (typeof val !== "string" || !val.startsWith("$")) {
+						throw new ArbiterError(
+							ArbiterErrorCode.RULE_COMPILATION_FAILED,
+							`Rule "${ruleName}" pattern[${index}] $join["${field}"].${op} must be a "$binding.path" reference`,
+							{ ruleName },
+						);
+					}
+					const bindingName = val.slice(1).split(".")[0];
+					if (!previousBindings.has(bindingName)) {
+						throw new ArbiterError(
+							ArbiterErrorCode.RULE_COMPILATION_FAILED,
+							`Rule "${ruleName}" pattern[${index}] $join references unknown binding "${bindingName}"`,
+							{ ruleName },
+						);
+					}
+				}
+			} else {
 				throw new ArbiterError(
 					ArbiterErrorCode.RULE_COMPILATION_FAILED,
-					`Rule "${ruleName}" pattern[${index}] $join["${field}"] must be a "$binding.path" reference`,
-					{ ruleName },
-				);
-			}
-
-			const bindingName = ref.slice(1).split(".")[0];
-			if (!previousBindings.has(bindingName)) {
-				throw new ArbiterError(
-					ArbiterErrorCode.RULE_COMPILATION_FAILED,
-					`Rule "${ruleName}" pattern[${index}] $join references unknown binding "${bindingName}"`,
+					`Rule "${ruleName}" pattern[${index}] $join["${field}"] must be a "$binding.path" reference or predicate object`,
 					{ ruleName },
 				);
 			}

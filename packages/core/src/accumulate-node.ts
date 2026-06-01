@@ -19,6 +19,8 @@ export interface AccumulateConfig {
 	readonly rule?: string | undefined;
 	/** Time window in ms — only facts asserted within window contribute */
 	readonly window?: number | undefined;
+	/** Expression to evaluate per token in token-driven mode */
+	readonly expr?: unknown | undefined;
 }
 
 export type AccumulateValue = number | null | readonly Record<string, unknown>[];

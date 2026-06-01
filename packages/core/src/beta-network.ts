@@ -2,7 +2,8 @@ import type { Token } from "./beta-node.js";
 import { tokenContainsFact } from "./beta-node.js";
 import type { Fact } from "./fact-memory.js";
 import type { FactPattern } from "./fact-pattern.js";
-import type { JoinConstraint, JoinNode } from "./join-node.js";
+import type { JoinPredicate } from "./fact-pattern.js";
+import type { InequalityConstraint, JoinConstraint, JoinNode } from "./join-node.js";
 import { createJoinNode } from "./join-node.js";
 import { generateTokenId } from "./token-id.js";
 
@@ -23,23 +24,45 @@ export interface BetaNetwork {
 	readonly getCompleteTokens: () => readonly Token[];
 }
 
+interface ParsedConstraints {
+	equality: JoinConstraint[];
+	inequality: InequalityConstraint[];
+}
+
+const INEQUALITY_OPS = new Set(["$gt", "$gte", "$lt", "$lte", "$ne"]);
+
 /** Extract join constraints from a pattern's $join field */
-function extractJoinConstraints(pattern: FactPattern): readonly JoinConstraint[] {
-	if (!pattern.$join) return [];
-	const constraints: JoinConstraint[] = [];
+function extractJoinConstraints(pattern: FactPattern): ParsedConstraints {
+	if (!pattern.$join) return { equality: [], inequality: [] };
+	const equality: JoinConstraint[] = [];
+	const inequality: InequalityConstraint[] = [];
+
 	for (const [rightField, ref] of Object.entries(pattern.$join)) {
-		// ref format: "$bindingName.fieldPath"
-		const match = ref.match(/^\$(\w+)\.(.+)$/);
-		if (!match) continue;
-		const [, leftBinding, leftField] = match;
-		constraints.push({
-			leftBinding,
-			leftField,
-			rightBinding: pattern.$bind,
-			rightField,
-		});
+		if (typeof ref === "string") {
+			// Equality: ref format "$bindingName.fieldPath"
+			const match = ref.match(/^\$(\w+)\.(.+)$/);
+			if (!match) continue;
+			const [, leftBinding, leftField] = match;
+			equality.push({ leftBinding, leftField, rightBinding: pattern.$bind, rightField });
+		} else {
+			// Predicate object with operator keys
+			const predicate = ref as JoinPredicate;
+			for (const [op, value] of Object.entries(predicate)) {
+				if (!INEQUALITY_OPS.has(op) || typeof value !== "string") continue;
+				const match = value.match(/^\$(\w+)\.(.+)$/);
+				if (!match) continue;
+				const [, leftBinding, leftField] = match;
+				inequality.push({
+					leftBinding,
+					leftField,
+					rightBinding: pattern.$bind,
+					rightField,
+					operator: op as InequalityConstraint["operator"],
+				});
+			}
+		}
 	}
-	return constraints;
+	return { equality, inequality };
 }
 
 /** Build a degenerate beta network for a single-pattern rule */
@@ -94,9 +117,19 @@ function buildMultiPatternNetwork(patterns: readonly FactPattern[]): BetaNetwork
 
 	// Build join nodes: one per pattern after the first
 	const joinNodes: JoinNode[] = [];
+	const seenFactTypes = new Set<string>([patterns[0].$fact]);
 	for (let i = 1; i < patterns.length; i++) {
-		const constraints = extractJoinConstraints(patterns[i]);
-		joinNodes.push(createJoinNode({ joinConstraints: constraints }));
+		const { equality, inequality } = extractJoinConstraints(patterns[i]);
+		const hasSelfJoinRisk = seenFactTypes.has(patterns[i].$fact);
+		const ineqConstraints = inequality.length > 0 ? inequality : undefined;
+		joinNodes.push(
+			createJoinNode({
+				joinConstraints: equality,
+				...(ineqConstraints && { inequalityConstraints: ineqConstraints }),
+				hasSelfJoinRisk,
+			}),
+		);
+		seenFactTypes.add(patterns[i].$fact);
 	}
 
 	// Map binding names to pattern positions

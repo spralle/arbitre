@@ -33,6 +33,8 @@ import { createCancelSchedule, createScheduleRule, createTick } from "./session-
 import { TEMPORAL_OPERATORS } from "./temporal-operators.js";
 import { createTimerQueue } from "./timer-queue.js";
 import { createTms } from "./tms.js";
+import type { TokenAccumulateManager } from "./token-accumulate-manager.js";
+import { createTokenAccumulateManager } from "./token-accumulate-manager.js";
 
 // ---------------------------------------------------------------------------
 // Factory
@@ -78,6 +80,14 @@ export function createSession<TState = Record<string, unknown>>(config?: Session
 		? createCrossTypeAccumulator(config.accumulates, config.accumulateFunctions)
 		: undefined;
 
+	// Token-driven accumulate support (expression-based aggregation over tokens)
+	let tokenAccumulateManager: TokenAccumulateManager | undefined = config?.accumulates?.length
+		? createTokenAccumulateManager(config.accumulates, config.accumulateFunctions)
+		: undefined;
+	if (tokenAccumulateManager && !tokenAccumulateManager.hasNodes()) {
+		tokenAccumulateManager = undefined;
+	}
+
 	function syncAggregates(): void {
 		const agg: Record<string, unknown> = {};
 		if (accumulateManager) {
@@ -85,6 +95,9 @@ export function createSession<TState = Record<string, unknown>>(config?: Session
 		}
 		if (crossTypeAccumulator) {
 			Object.assign(agg, crossTypeAccumulator.getValues());
+		}
+		if (tokenAccumulateManager) {
+			Object.assign(agg, tokenAccumulateManager.getValues());
 		}
 		if (Object.keys(agg).length > 0) {
 			scope.set("$aggregates", agg, "__accumulate__");
@@ -352,6 +365,7 @@ export function createSession<TState = Record<string, unknown>>(config?: Session
 		factMemory,
 		accumulateManager,
 		crossTypeAccumulator,
+		tokenAccumulateManager,
 		betaEvaluator,
 		scope,
 		compiledRules,
@@ -438,18 +452,37 @@ export function createSession<TState = Record<string, unknown>>(config?: Session
 		return {
 			scope: scope.snapshot(),
 			ruleConditionState: new Map(ruleConditionState),
+			tokenAccumulateSnapshot: tokenAccumulateManager ? snapshotTokenAccumulate() : undefined,
 		};
+	}
+
+	function snapshotTokenAccumulate(): Map<string, readonly Token[]> {
+		const snapshot = new Map<string, readonly Token[]>();
+		for (const name of compiledRules.keys()) {
+			const tokens = betaEvaluator.getTokensForRule(name);
+			if (tokens.length > 0) snapshot.set(name, tokens);
+		}
+		return snapshot;
 	}
 
 	function rollback(snapshot: unknown): void {
 		assertNotDisposed();
-		const snap = snapshot as { scope: unknown; ruleConditionState: Map<string, boolean> };
+		const snap = snapshot as {
+			scope: unknown;
+			ruleConditionState: Map<string, boolean>;
+			tokenAccumulateSnapshot?: Map<string, readonly Token[]>;
+		};
 		scope.restore(snap.scope);
 		ruleConditionState.clear();
 		for (const [key, val] of snap.ruleConditionState) {
 			ruleConditionState.set(key, val);
 		}
 		agenda.clear();
+		if (tokenAccumulateManager && snap.tokenAccumulateSnapshot) {
+			for (const [ruleName, tokens] of snap.tokenAccumulateSnapshot) {
+				tokenAccumulateManager.recomputeForRule(ruleName, tokens);
+			}
+		}
 	}
 
 	return {

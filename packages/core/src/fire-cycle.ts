@@ -240,7 +240,8 @@ export function fireCycle(ctx: FireContext): FiringResult {
 			ctx.pendingTokens?.delete(rule.name);
 		}
 
-		const ruleChanges = executeStages(rule.actions, rule.name, ctx);
+		const stageCtx = token ? { ...ctx, token } : ctx;
+		const ruleChanges = executeStages(rule.actions, rule.name, stageCtx);
 		changes.push(...ruleChanges);
 		rulesFired++;
 

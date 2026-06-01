@@ -22,12 +22,11 @@ describe("createBetaEvaluator", () => {
 		const tx1 = makeFact("t1", "Transaction", { amount: 100 });
 		const tx2 = makeFact("t2", "Transaction", { amount: 200 });
 
-		// Assert first fact — should activate both "txA" and "txB" bindings
+		// Assert first fact — activates both patterns but a single fact cannot
+		// self-join (self-exclusion guard prevents fact joining with itself)
 		const activations1 = evaluator.onFactAsserted("txA", "Transaction", tx1);
-		// At minimum the fact should be activated for both pattern positions
-		// The first fact alone won't produce complete tokens (needs join),
-		// but both patterns should receive the activation attempt
-		expect(activations1.length).toBeGreaterThanOrEqual(1);
+		// No complete tokens yet: one fact cannot pair with itself
+		expect(activations1.length).toBe(0);
 
 		// Assert second fact — now joins should produce complete tokens
 		const activations2 = evaluator.onFactAsserted("txB", "Transaction", tx2);
