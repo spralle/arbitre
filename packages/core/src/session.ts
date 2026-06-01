@@ -433,6 +433,25 @@ export function createSession<TState = Record<string, unknown>>(config?: Session
 		getMetrics: () => ({ ...metrics }),
 	};
 
+	function checkpoint(): unknown {
+		assertNotDisposed();
+		return {
+			scope: scope.snapshot(),
+			ruleConditionState: new Map(ruleConditionState),
+		};
+	}
+
+	function rollback(snapshot: unknown): void {
+		assertNotDisposed();
+		const snap = snapshot as { scope: unknown; ruleConditionState: Map<string, boolean> };
+		scope.restore(snap.scope);
+		ruleConditionState.clear();
+		for (const [key, val] of snap.ruleConditionState) {
+			ruleConditionState.set(key, val);
+		}
+		agenda.clear();
+	}
+
 	return {
 		registerRule,
 		removeRule,
@@ -452,5 +471,7 @@ export function createSession<TState = Record<string, unknown>>(config?: Session
 		scheduleRule,
 		cancelSchedule,
 		introspect,
+		checkpoint,
+		rollback,
 	};
 }

@@ -16,6 +16,7 @@ export interface Agenda {
 	readonly clearFocus: () => void;
 	readonly getActivations: () => readonly Activation[];
 	readonly size: () => number;
+	readonly clear: () => void;
 }
 
 function computeSpecificity(rule: CompiledRule): number {
@@ -117,6 +118,11 @@ export function createAgenda(): Agenda {
 		focusStack.length = 0;
 	};
 
+	const clear = (): void => {
+		activations = [];
+		activationNames.clear();
+	};
+
 	const getActivations = (): readonly Activation[] => [...activations];
 
 	const size = (): number => activations.length;
@@ -129,6 +135,7 @@ export function createAgenda(): Agenda {
 		setFocus,
 		getFocusGroup,
 		clearFocus,
+		clear,
 		getActivations,
 		size,
 	};

@@ -175,6 +175,11 @@ export interface RuleSession<TState = Record<string, unknown>> {
 	readonly cancelSchedule: (ruleName: string) => void;
 
 	readonly introspect: SessionIntrospection;
+
+	/** Create a checkpoint of the current session state. Returns an opaque snapshot. */
+	readonly checkpoint: () => unknown;
+	/** Restore session state to a previous checkpoint. Clears derived state (rule activation cache, agenda). */
+	readonly rollback: (snapshot: unknown) => void;
 }
 
 // ---------------------------------------------------------------------------
