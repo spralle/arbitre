@@ -1,5 +1,11 @@
 # @arbitre/core
 
+## 0.2.1
+
+### Patch Changes
+
+- 96767b5: Update repository metadata for the planned move to github.com/surikaterna/arbitre.
+
 ## 0.2.0
 
 ### Minor Changes
